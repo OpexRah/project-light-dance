@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Light Dance Choreography Studio | 5-Dancer Sync</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- TOP NAVBAR -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-group">
+          <div class="logo-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </div>
+          <div>
+            <h1 class="logo-title">LIGHT DANCE</h1>
+            <span class="logo-subtitle">Choreography Studio &bull; 5 Dancers</span>
+          </div>
+        </div>
+
+        <div class="audio-status-pill" id="audioStatusPill">
+          <span class="status-dot"></span>
+          <span class="track-name" id="trackNameDisplay">No audio loaded</span>
+          <span class="track-time" id="trackDurationDisplay">00:00.000</span>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <!-- Audio Loaders -->
+        <label class="btn btn-secondary file-upload-label" title="Load custom audio file (MP3, WAV, OGG)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+          <span>Drop Song</span>
+          <input type="file" id="audioFileInput" accept="audio/*" style="display:none;">
+        </label>
+
+        <button class="btn btn-ghost" id="btnLoadDemoTrack" title="Load built-in electronic dance beat">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+          </svg>
+          <span>Load Demo Beat</span>
+        </button>
+
+        <div class="header-divider"></div>
+
+        <!-- Export / Import -->
+        <button class="btn btn-secondary" id="btnImportModal" title="Import JSON or C++ Choreography">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M7 9l5-5 5 5M12 4v12"/>
+          </svg>
+          <span>Import</span>
+        </button>
+
+        <button class="btn btn-primary" id="btnExportModal" title="Export to Arduino C++ code & JSON">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          <span>Export Choreo</span>
+        </button>
+
+        <button class="btn btn-danger-outline" id="btnBlackoutAll" title="Instant blackout all suits">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+          </svg>
+          <span>Blackout</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN WORKSPACE -->
+    <main class="app-main">
+      
+      <!-- STAGE VISUALIZER (TOP SECTION) -->
+      <section class="stage-section" id="stageSection">
+        <div class="stage-header">
+          <div class="stage-title-group">
+            <span class="badge badge-accent">LIVE PREVIEW</span>
+            <h2>Stage Formation &bull; V-Shape (5 Dancers)</h2>
+          </div>
+          <div class="stage-controls">
+            <div class="dancer-toggles" id="dancerToggles">
+              <button class="toggle-btn active" data-dancer="0" title="All Dancers">ALL</button>
+              <button class="toggle-btn" data-dancer="1" title="Dancer 1 (Wing Left)">D1</button>
+              <button class="toggle-btn" data-dancer="2" title="Dancer 2 (Mid Left)">D2</button>
+              <button class="toggle-btn" data-dancer="3" title="Dancer 3 (Front Lead)">D3</button>
+              <button class="toggle-btn" data-dancer="4" title="Dancer 4 (Mid Right)">D4</button>
+              <button class="toggle-btn" data-dancer="5" title="Dancer 5 (Wing Right)">D5</button>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="btnTestFlashSuit" title="Quick 1-second white flash test">Flash Test</button>
+          </div>
+        </div>
+
+        <!-- 3D Perspective Stage Area -->
+        <div class="stage-viewport" id="stageViewport">
+          <div class="stage-grid"></div>
+          <div class="stage-spotlight"></div>
+
+          <!-- 5 Dancers in V-Formation matching Image 1 -->
+          <div class="stage-formation" id="stageFormation">
+            
+            <!-- Dancer 1: Wing Left -->
+            <div class="dancer-node pos-wing-left" id="dancerNode1" data-dancer="1">
+              <div class="dancer-label">D1 <span>Wing L</span></div>
+              <div class="dancer-suit-wrap" id="suitWrap1"></div>
+            </div>
+
+            <!-- Dancer 2: Mid Left -->
+            <div class="dancer-node pos-mid-left" id="dancerNode2" data-dancer="2">
+              <div class="dancer-label">D2 <span>Mid L</span></div>
+              <div class="dancer-suit-wrap" id="suitWrap2"></div>
+            </div>
+
+            <!-- Dancer 3: Front Center Lead -->
+            <div class="dancer-node pos-front-center" id="dancerNode3" data-dancer="3">
+              <div class="dancer-label lead">D3 <span>CENTER LEAD</span></div>
+              <div class="dancer-suit-wrap" id="suitWrap3"></div>
+            </div>
+
+            <!-- Dancer 4: Mid Right -->
+            <div class="dancer-node pos-mid-right" id="dancerNode4" data-dancer="4">
+              <div class="dancer-label">D4 <span>Mid R</span></div>
+              <div class="dancer-suit-wrap" id="suitWrap4"></div>
+            </div>
+
+            <!-- Dancer 5: Wing Right -->
+            <div class="dancer-node pos-wing-right" id="dancerNode5" data-dancer="5">
+              <div class="dancer-label">D5 <span>Wing R</span></div>
+              <div class="dancer-suit-wrap" id="suitWrap5"></div>
+            </div>
+
+          </div>
+
+          <div class="stage-overlay-time" id="stageOverlayTime">00:00.000 (0 ms)</div>
+        </div>
+      </section>
+
+      <!-- BOTTOM TIMELINE & EDITOR AREA -->
+      <section class="bottom-panel">
+        
+        <!-- TIMELINE & WAVEFORM DOCK -->
+        <div class="timeline-container">
+          
+          <!-- Timeline Control Bar -->
+          <div class="timeline-toolbar">
+            <div class="playback-controls">
+              <button class="btn-icon" id="btnJumpStart" title="Jump to start (Home)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                </svg>
+              </button>
+
+              <button class="btn-icon btn-play" id="btnPlayPause" title="Play / Pause (Spacebar)">
+                <svg class="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <svg class="icon-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:none;">
+                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+              </button>
+
+              <button class="btn-icon" id="btnJumpEnd" title="Jump to end">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                </svg>
+              </button>
+
+              <button class="btn-icon" id="btnStopPlayback" title="Stop & return to start">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12"/>
+                </svg>
+              </button>
+
+              <div class="timecode-display">
+                <span class="time-main" id="timecodeCurrent">00:00.000</span>
+                <span class="time-ms" id="timecodeMs">0 ms</span>
+              </div>
+            </div>
+
+            <!-- Timeline Actions -->
+            <div class="timeline-actions">
+              <button class="btn btn-primary btn-sm" id="btnAddMarkerAtPlayhead" title="Add light cue at current timestamp (M)">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span>Add Cue Marker</span>
+              </button>
+
+              <div class="zoom-controls">
+                <button class="btn-icon btn-sm" id="btnZoomOut" title="Zoom Out (-)">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                </button>
+                <span class="zoom-level" id="zoomLevelDisplay">1.0x</span>
+                <button class="btn-icon btn-sm" id="btnZoomIn" title="Zoom In (+)">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                </button>
+                <button class="btn-icon btn-sm" id="btnZoomFit" title="Fit to Screen">Fit</button>
+              </div>
+
+              <span class="cue-counter" id="cueCounterBadge">0 Cues</span>
+            </div>
+          </div>
+
+          <!-- Interactive Waveform & Timeline Track -->
+          <div class="timeline-scroll-wrap" id="timelineScrollWrap">
+            <div class="timeline-viewport" id="timelineViewport">
+              
+              <!-- Time Ruler -->
+              <canvas class="ruler-canvas" id="rulerCanvas"></canvas>
+
+              <!-- Waveform Canvas -->
+              <canvas class="waveform-canvas" id="waveformCanvas"></canvas>
+
+              <!-- Cue Markers Track -->
+              <div class="cues-track" id="cuesTrack"></div>
+
+              <!-- Playhead Indicator Line -->
+              <div class="playhead" id="playhead">
+                <div class="playhead-head"></div>
+                <div class="playhead-line"></div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- CUE INSPECTOR & CREATOR DOCK -->
+        <div class="cue-inspector-panel" id="cueInspectorPanel">
+          <div class="panel-header">
+            <h3 id="inspectorTitle">CUE BUILDER &bull; NEW CUE</h3>
+            <span class="badge" id="selectedCueBadge">Playhead Cue</span>
+          </div>
+
+          <div class="inspector-body">
+            
+            <!-- Timing & Duration -->
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label>Start Timestamp</label>
+                <div class="input-with-action">
+                  <input type="number" id="cueTimeInput" min="0" step="50" value="0">
+                  <span class="input-unit">ms</span>
+                  <button class="btn btn-ghost btn-xs" id="btnSnapPlayhead" title="Set to current playhead">Snap</button>
+                </div>
+              </div>
+
+              <div class="form-group flex-1">
+                <label>Duration</label>
+                <div class="input-with-action">
+                  <input type="number" id="cueDurationInput" min="100" step="100" value="1000">
+                  <span class="input-unit">ms</span>
+                </div>
+                <div class="quick-chips">
+                  <button class="chip" data-dur="250">250ms</button>
+                  <button class="chip" data-dur="500">500ms</button>
+                  <button class="chip active" data-dur="1000">1s</button>
+                  <button class="chip" data-dur="2000">2s</button>
+                  <button class="chip" data-dur="5000">5s</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Target Dancers -->
+            <div class="form-group">
+              <label>Target Dancers</label>
+              <div class="dancer-select-grid" id="dancerSelectGrid">
+                <button class="select-chip active" data-target="0">ALL (1-5)</button>
+                <button class="select-chip" data-target="1">D1 Wing L</button>
+                <button class="select-chip" data-target="2">D2 Mid L</button>
+                <button class="select-chip" data-target="3">D3 Lead</button>
+                <button class="select-chip" data-target="4">D4 Mid R</button>
+                <button class="select-chip" data-target="5">D5 Wing R</button>
+              </div>
+            </div>
+
+            <!-- Target Sections -->
+            <div class="form-group">
+              <div class="label-with-action">
+                <label>Target Sections (Top & Bottom)</label>
+                <div class="section-presets">
+                  <button class="text-btn" id="btnSelectFullSuit">Full Suit</button>
+                  <button class="text-btn" id="btnSelectAllTop">Top Only</button>
+                  <button class="text-btn" id="btnSelectAllBottom">Bottom Only</button>
+                  <button class="text-btn" id="btnClearSections">Clear</button>
+                </div>
+              </div>
+
+              <div class="sections-picker-grid" id="sectionsPickerGrid">
+                <!-- Top Part -->
+                <button class="section-chip active" data-sec="head">
+                  <span class="sec-dot" style="background:#00ffff;"></span>
+                  <span>Hood / Head</span>
+                  <small>101-152</small>
+                </button>
+                <button class="section-chip active" data-sec="left-hand">
+                  <span class="sec-dot" style="background:#00ff88;"></span>
+                  <span>Left Hand</span>
+                  <small>32-100</small>
+                </button>
+                <button class="section-chip active" data-sec="right-hand">
+                  <span class="sec-dot" style="background:#00ff88;"></span>
+                  <span>Right Hand</span>
+                  <small>153-225</small>
+                </button>
+                <button class="section-chip active" data-sec="left-zipper">
+                  <span class="sec-dot" style="background:#3b82f6;"></span>
+                  <span>Left Zipper</span>
+                  <small>0-31</small>
+                </button>
+                <button class="section-chip active" data-sec="right-zipper">
+                  <span class="sec-dot" style="background:#3b82f6;"></span>
+                  <span>Right Zipper</span>
+                  <small>226-299</small>
+                </button>
+
+                <!-- Bottom Part -->
+                <button class="section-chip active" data-sec="belt">
+                  <span class="sec-dot" style="background:#f59e0b;"></span>
+                  <span>Belt Area</span>
+                  <small>225-299</small>
+                </button>
+                <button class="section-chip active" data-sec="left-leg">
+                  <span class="sec-dot" style="background:#ef4444;"></span>
+                  <span>Left Leg</span>
+                  <small>0-110</small>
+                </button>
+                <button class="section-chip active" data-sec="right-leg">
+                  <span class="sec-dot" style="background:#ef4444;"></span>
+                  <span>Right Leg</span>
+                  <small>111-224</small>
+                </button>
+              </div>
+            </div>
+
+            <!-- Color Palette & Brightness -->
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label>Lighting Color</label>
+                <div class="color-picker-box">
+                  <input type="color" id="cueColorPicker" value="#00ffff">
+                  <div class="color-swatches" id="colorSwatches">
+                    <button class="swatch" style="background:#ff0044;" data-color="#ff0044" title="Neon Red"></button>
+                    <button class="swatch" style="background:#ff7700;" data-color="#ff7700" title="Orange"></button>
+                    <button class="swatch" style="background:#ffbb00;" data-color="#ffbb00" title="Gold Amber"></button>
+                    <button class="swatch" style="background:#ffee00;" data-color="#ffee00" title="Electric Yellow"></button>
+                    <button class="swatch" style="background:#00ff66;" data-color="#00ff66" title="Neon Green"></button>
+                    <button class="swatch active" style="background:#00ffff;" data-color="#00ffff" title="Cyan"></button>
+                    <button class="swatch" style="background:#0066ff;" data-color="#0066ff" title="Deep Blue"></button>
+                    <button class="swatch" style="background:#9900ff;" data-color="#9900ff" title="Electric Violet"></button>
+                    <button class="swatch" style="background:#ff00bb;" data-color="#ff00bb" title="Hot Pink"></button>
+                    <button class="swatch" style="background:#ffffff;" data-color="#ffffff" title="Pure White"></button>
+                    <button class="swatch" style="background:#000000; border-color:#555;" data-color="#000000" title="Blackout / Off"></button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group flex-1">
+                <label>Color Code</label>
+                <div class="color-val-display" id="colorHexDisplay">
+                  <span class="preview-dot" id="colorPreviewDot" style="background:#00ffff;"></span>
+                  <span class="hex-text" id="colorHexText">#00FFFF</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="inspector-actions">
+              <button class="btn btn-primary" id="btnSaveCue">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span id="btnSaveCueText">Save Cue</span>
+              </button>
+
+              <button class="btn btn-ghost" id="btnDuplicateCue" title="Duplicate cue">Duplicate</button>
+              <button class="btn btn-danger-ghost" id="btnDeleteCue" title="Delete cue" style="display:none;">Delete</button>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+    </main>
+
+    <!-- EXPORT MODAL -->
+    <div class="modal-backdrop" id="exportModal" style="display:none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Export Choreography</h3>
+          <button class="modal-close" id="btnCloseExportModal">&times;</button>
+        </div>
+        <div class="modal-tabs">
+          <button class="tab-btn active" data-tab="tab-cpp">Arduino C++ (Master Code)</button>
+          <button class="tab-btn" data-tab="tab-json">JSON Project File</button>
+        </div>
+        <div class="modal-body">
+          <!-- C++ Tab -->
+          <div class="tab-content active" id="tab-cpp">
+            <p class="tab-desc">Copy this C++ array directly into <code>choreography[]</code> in <code>Master_1_slave/Master_1_slave.ino</code>:</p>
+            <textarea class="code-box" id="cppOutputBox" readonly></textarea>
+            <div class="modal-actions">
+              <button class="btn btn-secondary" id="btnCopyCpp">Copy C++ Code</button>
+              <button class="btn btn-primary" id="btnDownloadCppSnippet">Download .ino Snippet</button>
+            </div>
+          </div>
+          <!-- JSON Tab -->
+          <div class="tab-content" id="tab-json">
+            <p class="tab-desc">Save your complete choreography project with all cues and timeline settings:</p>
+            <textarea class="code-box" id="jsonOutputBox" readonly></textarea>
+            <div class="modal-actions">
+              <button class="btn btn-secondary" id="btnCopyJson">Copy JSON</button>
+              <button class="btn btn-primary" id="btnDownloadJson">Download .json File</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMPORT MODAL -->
+    <div class="modal-backdrop" id="importModal" style="display:none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Import Choreography</h3>
+          <button class="modal-close" id="btnCloseImportModal">&times;</button>
+        </div>
+        <div class="modal-tabs">
+          <button class="tab-btn active" data-tab="tab-import-json">Load JSON File / Paste</button>
+          <button class="tab-btn" data-tab="tab-import-cpp">Paste C++ Choreo Code</button>
+        </div>
+        <div class="modal-body">
+          <!-- Import JSON Tab -->
+          <div class="tab-content active" id="tab-import-json">
+            <p class="tab-desc">Paste JSON project code or drop your exported <code>.json</code> file:</p>
+            <input type="file" id="jsonFileInput" accept=".json" style="margin-bottom:12px;">
+            <textarea class="code-box" id="jsonInputBox" placeholder="Paste JSON here..."></textarea>
+            <div class="modal-actions">
+              <button class="btn btn-primary" id="btnConfirmImportJson">Import JSON</button>
+            </div>
+          </div>
+          <!-- Import C++ Tab -->
+          <div class="tab-content" id="tab-import-cpp">
+            <p class="tab-desc">Paste your <code>choreography[]</code> array from <code>Master_1_slave.ino</code>:</p>
+            <textarea class="code-box" id="cppInputBox" placeholder="Paste choreography[] { ... } here..."></textarea>
+            <div class="modal-actions">
+              <button class="btn btn-primary" id="btnConfirmImportCpp">Parse & Import C++</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Audio Element for file playback -->
+  <audio id="audioElement" preload="auto"></audio>
+
+  <!-- Application Script -->
+  <script src="app.js"></script>
+</body>
+</html>

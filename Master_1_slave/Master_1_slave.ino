@@ -1,10 +1,20 @@
 // ============================================================================
-// LIGHT DANCE MASTER CONTROLLER (Supports 5 Slaves / Dancers & 2 Strips Each)
+// LIGHT DANCE MASTER CONTROLLER (Supports 5 Slaves / Dancers & Configurable Sections)
 // ============================================================================
 // Architecture:
 // - 1 Master ESP32 sends ESP-NOW choreography packets to 5 Slave ESP32s
-// - Each dancer has 2 LED strips: Upper Body (strip 0) and Lower Body (strip 1)
-// - Supports unicast targeting to individual dancers (1-5) or broadcast to all (0)
+// - Configurable Sections per Dancer:
+//     * TOP PART (Strip 0, GPIO 14):
+//         - Left Zipper:  0 to 31
+//         - Left Hand:    32 to 100
+//         - Hood / Head:  101 to 152
+//         - Right Hand:   153 to 225
+//         - Right Zipper: 226 to 299
+//     * BOTTOM PART (Strip 1, GPIO 25):
+//         - Left Leg:     0 to 110
+//         - Right Leg:    111 to 224
+//         - Belt Area:    225 to 299
+// - Supports section-wise animations as well as full-suit animations
 // - Real-time connection status monitoring & delivery ACK verification via Serial
 // ============================================================================
 
@@ -39,7 +49,34 @@ uint8_t SLAVE_MACS[NUM_SLAVES][6] = {
 // Strip IDs
 #define STRIP_UPPER  0   // Upper body LED strip
 #define STRIP_LOWER  1   // Lower body LED strip
-#define STRIP_BOTH   2   // Both upper and lower body strips
+#define STRIP_BOTH   2   // Both upper and lower body strips (Full Suit)
+
+// ================= SECTION CONFIGURATION (CONFIGURABLE) =================
+// >>> TOP PART (Upper Body - Strip 0, GPIO 14, 300 LEDs: 0 - 299) <<<
+#define SEC_TOP_LEFT_ZIPPER_START    0
+#define SEC_TOP_LEFT_ZIPPER_END     31
+
+#define SEC_TOP_LEFT_HAND_START     32
+#define SEC_TOP_LEFT_HAND_END      100
+
+#define SEC_TOP_HEAD_START         101
+#define SEC_TOP_HEAD_END           152
+
+#define SEC_TOP_RIGHT_HAND_START   153
+#define SEC_TOP_RIGHT_HAND_END     225
+
+#define SEC_TOP_RIGHT_ZIPPER_START 226
+#define SEC_TOP_RIGHT_ZIPPER_END   299
+
+// >>> BOTTOM PART (Lower Body - Strip 1, GPIO 25, 300 LEDs: 0 - 299) <<<
+#define SEC_BOT_LEFT_LEG_START       0
+#define SEC_BOT_LEFT_LEG_END       110
+
+#define SEC_BOT_RIGHT_LEG_START    111
+#define SEC_BOT_RIGHT_LEG_END      224
+
+#define SEC_BOT_BELT_START         225
+#define SEC_BOT_BELT_END           299
 
 // ================= PACKET STRUCTURE =================
 // 13-byte packed network struct sent over ESP-NOW
@@ -54,64 +91,177 @@ typedef struct __attribute__((packed)) {
     uint8_t  b;           // Blue (0-255)
 } Packet;
 
+// ================= CHOREOGRAPHY HELPER MACROS =================
+// --- Full Suit & Full Strips ---
+#define CUE_FULL_SUIT(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_BOTH, 0, 299, r, g, b }
+
+#define CUE_UPPER_BODY(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, 0, 299, r, g, b }
+
+#define CUE_LOWER_BODY(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_LOWER, 0, 299, r, g, b }
+
+// --- Top Sections (Upper Strip) ---
+#define CUE_LEFT_ZIPPER(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, SEC_TOP_LEFT_ZIPPER_START, SEC_TOP_LEFT_ZIPPER_END, r, g, b }
+
+#define CUE_LEFT_HAND(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, SEC_TOP_LEFT_HAND_START, SEC_TOP_LEFT_HAND_END, r, g, b }
+
+#define CUE_HEAD(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, SEC_TOP_HEAD_START, SEC_TOP_HEAD_END, r, g, b }
+
+#define CUE_RIGHT_HAND(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, SEC_TOP_RIGHT_HAND_START, SEC_TOP_RIGHT_HAND_END, r, g, b }
+
+#define CUE_RIGHT_ZIPPER(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_UPPER, SEC_TOP_RIGHT_ZIPPER_START, SEC_TOP_RIGHT_ZIPPER_END, r, g, b }
+
+// --- Bottom Sections (Lower Strip) ---
+#define CUE_LEFT_LEG(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_LOWER, SEC_BOT_LEFT_LEG_START, SEC_BOT_LEFT_LEG_END, r, g, b }
+
+#define CUE_RIGHT_LEG(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_LOWER, SEC_BOT_RIGHT_LEG_START, SEC_BOT_RIGHT_LEG_END, r, g, b }
+
+#define CUE_BOTH_LEGS(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_LOWER, SEC_BOT_LEFT_LEG_START, SEC_BOT_RIGHT_LEG_END, r, g, b }
+
+#define CUE_BELT(ms, dancer, r, g, b) \
+    { ms, dancer, STRIP_LOWER, SEC_BOT_BELT_START, SEC_BOT_BELT_END, r, g, b }
+
+// Helper: Converts strip & LED range to human-readable section name for Serial Monitor
+const char* getSectionName(uint8_t strip, uint16_t startLed, uint16_t endLed)
+{
+    if (strip == STRIP_BOTH && startLed == 0 && endLed >= 299) return "FULL SUIT";
+    if (strip == STRIP_UPPER) {
+        if (startLed == 0 && endLed >= 299) return "UPPER BODY (ALL)";
+        if (startLed == SEC_TOP_LEFT_ZIPPER_START && endLed == SEC_TOP_LEFT_ZIPPER_END) return "LEFT ZIPPER";
+        if (startLed == SEC_TOP_LEFT_HAND_START && endLed == SEC_TOP_LEFT_HAND_END) return "LEFT HAND";
+        if (startLed == SEC_TOP_HEAD_START && endLed == SEC_TOP_HEAD_END) return "HOOD/HEAD";
+        if (startLed == SEC_TOP_RIGHT_HAND_START && endLed == SEC_TOP_RIGHT_HAND_END) return "RIGHT HAND";
+        if (startLed == SEC_TOP_RIGHT_ZIPPER_START && endLed == SEC_TOP_RIGHT_ZIPPER_END) return "RIGHT ZIPPER";
+        return "UPPER CUSTOM";
+    }
+    if (strip == STRIP_LOWER) {
+        if (startLed == 0 && endLed >= 299) return "LOWER BODY (ALL)";
+        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_LEFT_LEG_END) return "LEFT LEG";
+        if (startLed == SEC_BOT_RIGHT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "RIGHT LEG";
+        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "BOTH LEGS";
+        if (startLed == SEC_BOT_BELT_START && endLed == SEC_BOT_BELT_END) return "BELT AREA";
+        return "LOWER CUSTOM";
+    }
+    return "CUSTOM";
+}
+
 // ================= CHOREOGRAPHY TIMELINE =================
-// Format: { timeMs, slaveId, strip, startLed, endLed, r, g, b }
-// - slaveId: SLAVE_ALL (0) or SLAVE_1 (1) through SLAVE_5 (5)
-// - strip:   STRIP_UPPER (0), STRIP_LOWER (1), or STRIP_BOTH (2)
+// Demonstrates Section-Wise Animations, Alternating Limbs, Solo Highlights, and Full-Suit Drops
 Packet choreography[] = {
 
-    // -------- 0s: ALL DANCERS RED (Upper and Lower) --------
-    {    0, SLAVE_ALL, STRIP_UPPER, 0, 299, 255,   0,   0},
-    {    0, SLAVE_ALL, STRIP_LOWER, 0, 299, 255,   0,   0},
+    // =========================================================================
+    // PHASE 1: GROUND-UP SECTION BUILD-UP ANIMATION (0s - 7s)
+    // =========================================================================
+    // 0.0s: Ambient start - Only Belts glowing warm amber across all 5 dancers
+    CUE_BELT(0, SLAVE_ALL, 255, 120, 0),
 
-    // -------- 5s: ALL DANCERS ORANGE --------
-    { 5000, SLAVE_ALL, STRIP_UPPER, 0, 299, 255, 127,   0},
-    { 5000, SLAVE_ALL, STRIP_LOWER, 0, 299, 255, 127,   0},
+    // 1.5s: Feet/Legs ignite in Ice Blue (Bottom-up wave)
+    CUE_BOTH_LEGS(1500, SLAVE_ALL, 0, 180, 255),
 
-    // -------- 10s: ALL DANCERS YELLOW --------
-    {10000, SLAVE_ALL, STRIP_UPPER, 0, 299, 255, 255,   0},
-    {10000, SLAVE_ALL, STRIP_LOWER, 0, 299, 255, 255,   0},
+    // 3.0s: Torso Zippers race up in Cyan
+    CUE_LEFT_ZIPPER(3000, SLAVE_ALL, 0, 255, 200),
+    CUE_RIGHT_ZIPPER(3000, SLAVE_ALL, 0, 255, 200),
 
-    // -------- 15s: ALL DANCERS GREEN --------
-    {15000, SLAVE_ALL, STRIP_UPPER, 0, 299,   0, 255,   0},
-    {15000, SLAVE_ALL, STRIP_LOWER, 0, 299,   0, 255,   0},
+    // 4.5s: Hands illuminate in Vibrant Purple
+    CUE_LEFT_HAND(4500, SLAVE_ALL, 180, 0, 255),
+    CUE_RIGHT_HAND(4500, SLAVE_ALL, 180, 0, 255),
 
-    // -------- 20s: ALL DANCERS CYAN --------
-    {20000, SLAVE_ALL, STRIP_UPPER, 0, 299,   0, 255, 255},
-    {20000, SLAVE_ALL, STRIP_LOWER, 0, 299,   0, 255, 255},
+    // 6.0s: Hoods / Heads illuminate in Pure White
+    CUE_HEAD(6000, SLAVE_ALL, 255, 255, 255),
 
-    // -------- 25s: ALL DANCERS BLUE --------
-    {25000, SLAVE_ALL, STRIP_UPPER, 0, 299,   0,   0, 255},
-    {25000, SLAVE_ALL, STRIP_LOWER, 0, 299,   0,   0, 255},
+    // =========================================================================
+    // PHASE 2: SYNCHRONIZED FULL-SUIT COLOR WASHES (7s - 15s)
+    // =========================================================================
+    // 7.5s: Beat drop! Entire suits snap to Intense Red
+    CUE_FULL_SUIT(7500, SLAVE_ALL, 255, 0, 0),
 
-    // -------- 30s: INDIVIDUAL DANCER COLORS (Solo highlights) --------
-    // Dancer 1: Red Upper, Blue Lower
-    {30000, SLAVE_1,   STRIP_UPPER, 0, 299, 255,   0,   0},
-    {30000, SLAVE_1,   STRIP_LOWER, 0, 299,   0,   0, 255},
-    // Dancer 2: Green Upper, Yellow Lower
-    {30000, SLAVE_2,   STRIP_UPPER, 0, 299,   0, 255,   0},
-    {30000, SLAVE_2,   STRIP_LOWER, 0, 299, 255, 255,   0},
-    // Dancer 3: Purple Upper, White Lower
-    {30000, SLAVE_3,   STRIP_UPPER, 0, 299, 148,   0, 211},
-    {30000, SLAVE_3,   STRIP_LOWER, 0, 299, 255, 255, 255},
-    // Dancer 4: Cyan Upper, Magenta Lower
-    {30000, SLAVE_4,   STRIP_UPPER, 0, 299,   0, 255, 255},
-    {30000, SLAVE_4,   STRIP_LOWER, 0, 299, 255,   0, 255},
-    // Dancer 5: Orange Upper, Pink Lower
-    {30000, SLAVE_5,   STRIP_UPPER, 0, 299, 255, 127,   0},
-    {30000, SLAVE_5,   STRIP_LOWER, 0, 299, 255,  20, 147},
+    // 10.0s: Entire suits shift to Neon Green
+    CUE_FULL_SUIT(10000, SLAVE_ALL, 0, 255, 0),
 
-    // -------- 35s: ALL DANCERS INDIGO --------
-    {35000, SLAVE_ALL, STRIP_UPPER, 0, 299,  75,   0, 130},
-    {35000, SLAVE_ALL, STRIP_LOWER, 0, 299,  75,   0, 130},
+    // 12.5s: Entire suits shift to Deep Blue
+    CUE_FULL_SUIT(12500, SLAVE_ALL, 0, 0, 255),
 
-    // -------- 40s: ALL DANCERS WHITE --------
-    {40000, SLAVE_ALL, STRIP_UPPER, 0, 299, 255, 255, 255},
-    {40000, SLAVE_ALL, STRIP_LOWER, 0, 299, 255, 255, 255},
+    // =========================================================================
+    // PHASE 3: RHYTHMIC SECTION-WISE ALTERNATING ANIMATIONS (15s - 23s)
+    // =========================================================================
+    // 15.0s: Dim lower body; Left Hand Red, Right Hand Cyan
+    CUE_LOWER_BODY(15000, SLAVE_ALL, 0, 0, 0),
+    CUE_LEFT_HAND(15000, SLAVE_ALL, 255, 0, 0),
+    CUE_RIGHT_HAND(15000, SLAVE_ALL, 0, 255, 255),
+    CUE_HEAD(15000, SLAVE_ALL, 255, 255, 0),
 
-    // -------- 45s: ALL DANCERS BLACKOUT (OFF) --------
-    {45000, SLAVE_ALL, STRIP_UPPER, 0, 299,   0,   0,   0},
-    {45000, SLAVE_ALL, STRIP_LOWER, 0, 299,   0,   0,   0},
+    // 17.0s: Hand Swap! Left Hand Cyan, Right Hand Red
+    CUE_LEFT_HAND(17000, SLAVE_ALL, 0, 255, 255),
+    CUE_RIGHT_HAND(17000, SLAVE_ALL, 255, 0, 0),
+
+    // 19.0s: Leg Walk Animation - Left Leg Green, Right Leg Off
+    CUE_LEFT_LEG(19000, SLAVE_ALL, 0, 255, 0),
+    CUE_RIGHT_LEG(19000, SLAVE_ALL, 0, 0, 0),
+    CUE_BELT(19000, SLAVE_ALL, 255, 120, 0),
+
+    // 21.0s: Leg Swap - Left Leg Off, Right Leg Green
+    CUE_LEFT_LEG(21000, SLAVE_ALL, 0, 0, 0),
+    CUE_RIGHT_LEG(21000, SLAVE_ALL, 0, 255, 0),
+
+    // =========================================================================
+    // PHASE 4: INDIVIDUAL DANCER SOLO HIGHLIGHTS (23s - 33s)
+    // =========================================================================
+    // 23.0s: Reset all dancers to Belt only
+    CUE_FULL_SUIT(23000, SLAVE_ALL, 0, 0, 0),
+    CUE_BELT(23000, SLAVE_ALL, 50, 25, 0),
+
+    // 24.0s: Dancer 1 SOLO - Full Suit Gold / Yellow
+    CUE_FULL_SUIT(24000, SLAVE_1, 255, 215, 0),
+
+    // 26.0s: Dancer 2 SOLO - Hands & Hood Magenta (Dancer 1 back to Belt)
+    CUE_FULL_SUIT(26000, SLAVE_1, 0, 0, 0),
+    CUE_BELT(26000, SLAVE_1, 50, 25, 0),
+    CUE_HEAD(26000, SLAVE_2, 255, 0, 180),
+    CUE_LEFT_HAND(26000, SLAVE_2, 255, 0, 180),
+    CUE_RIGHT_HAND(26000, SLAVE_2, 255, 0, 180),
+
+    // 28.0s: Dancer 3 SOLO - Zippers & Legs Cyan (Dancer 2 back to Belt)
+    CUE_FULL_SUIT(28000, SLAVE_2, 0, 0, 0),
+    CUE_BELT(28000, SLAVE_2, 50, 25, 0),
+    CUE_LEFT_ZIPPER(28000, SLAVE_3, 0, 255, 255),
+    CUE_RIGHT_ZIPPER(28000, SLAVE_3, 0, 255, 255),
+    CUE_BOTH_LEGS(28000, SLAVE_3, 0, 255, 255),
+
+    // 30.0s: Dancer 4 & 5 DUO - Dancer 4 Red, Dancer 5 Blue
+    CUE_FULL_SUIT(30000, SLAVE_3, 0, 0, 0),
+    CUE_BELT(30000, SLAVE_3, 50, 25, 0),
+    CUE_FULL_SUIT(30000, SLAVE_4, 255, 0, 0),
+    CUE_FULL_SUIT(30000, SLAVE_5, 0, 0, 255),
+
+    // =========================================================================
+    // PHASE 5: GRAND FINALE CLIMAX & BLACKOUT (33s - 40s)
+    // =========================================================================
+    // 33.0s: All Dancers - Zippers & Hood Pulsing Orange
+    CUE_FULL_SUIT(33000, SLAVE_ALL, 0, 0, 0),
+    CUE_HEAD(33000, SLAVE_ALL, 255, 100, 0),
+    CUE_LEFT_ZIPPER(33000, SLAVE_ALL, 255, 100, 0),
+    CUE_RIGHT_ZIPPER(33000, SLAVE_ALL, 255, 100, 0),
+
+    // 35.0s: Hands + Legs ignite in Electric Violet
+    CUE_LEFT_HAND(35000, SLAVE_ALL, 148, 0, 211),
+    CUE_RIGHT_HAND(35000, SLAVE_ALL, 148, 0, 211),
+    CUE_BOTH_LEGS(35000, SLAVE_ALL, 148, 0, 211),
+
+    // 37.0s: Full Troupe Maximum Brightness WHITE FLASH
+    CUE_FULL_SUIT(37000, SLAVE_ALL, 255, 255, 255),
+
+    // 40.0s: BLACKOUT (All Dancers Completely Off)
+    CUE_FULL_SUIT(40000, SLAVE_ALL, 0, 0, 0),
 };
 
 const int TOTAL_STEPS = sizeof(choreography) / sizeof(Packet);
@@ -280,28 +430,60 @@ void testConnections()
     Serial.println("=======================================================\n");
 }
 
-// ================= VISUAL TEST =================
+// ================= SECTION DIAGNOSTIC VISUAL TEST =================
 void runVisualTest()
 {
-    Serial.println("\n[MASTER] Running visual test across all connected dancers...");
+    Serial.println("\n[MASTER] Running Section-by-Section Diagnostic Test on All Dancers...");
 
-    Packet pWhiteUpper = {0, SLAVE_ALL, STRIP_UPPER, 0, 299, 255, 255, 255};
-    Packet pWhiteLower = {0, SLAVE_ALL, STRIP_LOWER, 0, 299, 255, 255, 255};
-    Packet pOffUpper   = {0, SLAVE_ALL, STRIP_UPPER, 0, 299,   0,   0,   0};
-    Packet pOffLower   = {0, SLAVE_ALL, STRIP_LOWER, 0, 299,   0,   0,   0};
+    // 1. Hood / Head
+    Serial.println("  1. Testing HOOD / HEAD (Cyan)...");
+    Packet pHead = CUE_HEAD(0, SLAVE_ALL, 0, 255, 255);
+    sendPacket(pHead);
+    delay(1000);
 
-    Serial.println("  1. Testing UPPER body strips (WHITE)...");
-    sendPacket(pWhiteUpper);
+    // 2. Left & Right Hands
+    Serial.println("  2. Testing LEFT HAND (Green) & RIGHT HAND (Magenta)...");
+    Packet pLHand = CUE_LEFT_HAND(0, SLAVE_ALL, 0, 255, 0);
+    Packet pRHand = CUE_RIGHT_HAND(0, SLAVE_ALL, 255, 0, 255);
+    sendPacket(pLHand);
+    sendPacket(pRHand);
+    delay(1000);
+
+    // 3. Left & Right Zippers
+    Serial.println("  3. Testing LEFT & RIGHT ZIPPERS (Blue)...");
+    Packet pLZip = CUE_LEFT_ZIPPER(0, SLAVE_ALL, 0, 120, 255);
+    Packet pRZip = CUE_RIGHT_ZIPPER(0, SLAVE_ALL, 0, 120, 255);
+    sendPacket(pLZip);
+    sendPacket(pRZip);
+    delay(1000);
+
+    // 4. Belt Area
+    Serial.println("  4. Testing BELT AREA (Amber)...");
+    Packet pBelt = CUE_BELT(0, SLAVE_ALL, 255, 120, 0);
+    sendPacket(pBelt);
+    delay(1000);
+
+    // 5. Left & Right Legs
+    Serial.println("  5. Testing LEFT LEG (Red) & RIGHT LEG (Yellow)...");
+    Packet pLLeg = CUE_LEFT_LEG(0, SLAVE_ALL, 255, 0, 0);
+    Packet pRLeg = CUE_RIGHT_LEG(0, SLAVE_ALL, 255, 255, 0);
+    sendPacket(pLLeg);
+    sendPacket(pRLeg);
+    delay(1000);
+
+    // 6. Full Suit
+    Serial.println("  6. Testing FULL SUIT (White)...");
+    Packet pSuit = CUE_FULL_SUIT(0, SLAVE_ALL, 255, 255, 255);
+    sendPacket(pSuit);
     delay(1200);
 
-    Serial.println("  2. Testing LOWER body strips (WHITE)...");
-    sendPacket(pWhiteLower);
-    delay(1200);
-
-    Serial.println("  3. Blackout (OFF)...");
+    // 7. Blackout
+    Serial.println("  7. Blackout (Turn Off All)...");
+    Packet pOffUpper = CUE_UPPER_BODY(0, SLAVE_ALL, 0, 0, 0);
+    Packet pOffLower = CUE_LOWER_BODY(0, SLAVE_ALL, 0, 0, 0);
     sendPacket(pOffUpper);
     sendPacket(pOffLower);
-    Serial.println("[MASTER] Visual test finished.\n");
+    Serial.println("[MASTER] Section diagnostic test complete.\n");
 }
 
 // ================= SETUP =================
@@ -319,6 +501,18 @@ void setup()
     Serial.print("Master MAC Address: ");
     Serial.println(WiFi.macAddress());
     Serial.printf("Wi-Fi Channel:      %d\n", WIFI_CHANNEL);
+    Serial.println("-------------------------------------------------------");
+    Serial.println("CONFIGURED BODY SECTIONS:");
+    Serial.printf("  Upper Strip (GPIO 14): LeftZip: %d-%d | LHand: %d-%d | Hood: %d-%d | RHand: %d-%d | RightZip: %d-%d\n",
+                  SEC_TOP_LEFT_ZIPPER_START, SEC_TOP_LEFT_ZIPPER_END,
+                  SEC_TOP_LEFT_HAND_START, SEC_TOP_LEFT_HAND_END,
+                  SEC_TOP_HEAD_START, SEC_TOP_HEAD_END,
+                  SEC_TOP_RIGHT_HAND_START, SEC_TOP_RIGHT_HAND_END,
+                  SEC_TOP_RIGHT_ZIPPER_START, SEC_TOP_RIGHT_ZIPPER_END);
+    Serial.printf("  Lower Strip (GPIO 25): LeftLeg: %d-%d | RightLeg: %d-%d | Belt: %d-%d\n",
+                  SEC_BOT_LEFT_LEG_START, SEC_BOT_LEFT_LEG_END,
+                  SEC_BOT_RIGHT_LEG_START, SEC_BOT_RIGHT_LEG_END,
+                  SEC_BOT_BELT_START, SEC_BOT_BELT_END);
     Serial.println("-------------------------------------------------------");
     Serial.println("Initializing ESP-NOW Peer Registration for 5 Dancers:");
 
@@ -372,7 +566,7 @@ void setup()
     Serial.println("  START  -> Begin synced choreography playback");
     Serial.println("  STOP   -> Stop playback & blackout all dancers");
     Serial.println("  CHECK  -> Test connection & ACK response from all 5 dancers");
-    Serial.println("  TEST   -> Run a quick visual light test on all dancers");
+    Serial.println("  TEST   -> Run a step-by-step section visual test on all dancers");
     Serial.println("=======================================================\n");
 
     // Check connections immediately upon startup
@@ -402,8 +596,8 @@ void loop()
             playing = false;
 
             // Turn off both upper and lower strips for all dancers
-            Packet offUpper = {0, SLAVE_ALL, STRIP_UPPER, 0, 299, 0, 0, 0};
-            Packet offLower = {0, SLAVE_ALL, STRIP_LOWER, 0, 299, 0, 0, 0};
+            Packet offUpper = CUE_UPPER_BODY(0, SLAVE_ALL, 0, 0, 0);
+            Packet offLower = CUE_LOWER_BODY(0, SLAVE_ALL, 0, 0, 0);
 
             sendPacket(offUpper);
             sendPacket(offLower);
@@ -433,15 +627,14 @@ void loop()
            elapsed >= choreography[stepIndex].timeMs)
     {
         Packet &pkt = choreography[stepIndex];
-        const char *stripStr = (pkt.strip == STRIP_UPPER) ? "UPPER" :
-                              ((pkt.strip == STRIP_LOWER) ? "LOWER" : "BOTH");
+        const char *secName = getSectionName(pkt.strip, pkt.startLed, pkt.endLed);
 
         if (pkt.slaveId == SLAVE_ALL) {
-            Serial.printf("[CUE %02d @ %6ums] ALL DANCERS -> Strip: %-5s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
-                          stepIndex + 1, elapsed, stripStr, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
+            Serial.printf("[CUE %02d @ %6ums] ALL DANCERS -> %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
+                          stepIndex + 1, elapsed, secName, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
         } else {
-            Serial.printf("[CUE %02d @ %6ums] DANCER #%d     -> Strip: %-5s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
-                          stepIndex + 1, elapsed, pkt.slaveId, stripStr, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
+            Serial.printf("[CUE %02d @ %6ums] DANCER #%d     -> %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
+                          stepIndex + 1, elapsed, pkt.slaveId, secName, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
         }
 
         sendPacket(pkt);

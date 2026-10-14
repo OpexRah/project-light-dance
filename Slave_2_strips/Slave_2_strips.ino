@@ -1,12 +1,20 @@
 // ============================================================================
-// LIGHT DANCE SLAVE CONTROLLER (Supports Upper & Lower Strips + Dancer ID Filtering)
+// LIGHT DANCE SLAVE CONTROLLER (Supports Configurable Sections & Dual Strips)
 // ============================================================================
 // Architecture:
 // - Upload this sketch to each of the 5 dancer ESP32s
 // - IMPORTANT: Change 'MY_SLAVE_ID' (1 to 5) before uploading to each board!
 // - 2 LED Strips per dancer:
-//     * Upper Body Strip: GPIO 14 (Strip 0)
-//     * Lower Body Strip: GPIO 25 (Strip 1)
+//     * Upper Body Strip: GPIO 14 (300 LEDs: 0 to 299)
+//         - Left Zipper:  0 to 31
+//         - Left Hand:    32 to 100
+//         - Hood / Head:  101 to 152
+//         - Right Hand:   153 to 225
+//         - Right Zipper: 226 to 299
+//     * Lower Body Strip: GPIO 25 (300 LEDs: 0 to 299)
+//         - Left Leg:     0 to 110
+//         - Right Leg:    111 to 224
+//         - Belt Area:    225 to 299
 // - Filters packets: processes commands matching its ID or broadcast (SLAVE_ALL = 0)
 // - Prints full diagnostic and connection status messages to Serial Monitor
 // ============================================================================
@@ -37,7 +45,34 @@
 #define SLAVE_ALL       0       // Target all dancers
 #define STRIP_UPPER     0       // Upper body strip
 #define STRIP_LOWER     1       // Lower body strip
-#define STRIP_BOTH      2       // Both upper & lower body strips
+#define STRIP_BOTH      2       // Both upper & lower body strips (Full Suit)
+
+// ================= SECTION CONFIGURATION (CONFIGURABLE) =================
+// >>> TOP PART (Upper Body - Strip 0, GPIO 14, 300 LEDs: 0 - 299) <<<
+#define SEC_TOP_LEFT_ZIPPER_START    0
+#define SEC_TOP_LEFT_ZIPPER_END     31
+
+#define SEC_TOP_LEFT_HAND_START     32
+#define SEC_TOP_LEFT_HAND_END      100
+
+#define SEC_TOP_HEAD_START         101
+#define SEC_TOP_HEAD_END           152
+
+#define SEC_TOP_RIGHT_HAND_START   153
+#define SEC_TOP_RIGHT_HAND_END     225
+
+#define SEC_TOP_RIGHT_ZIPPER_START 226
+#define SEC_TOP_RIGHT_ZIPPER_END   299
+
+// >>> BOTTOM PART (Lower Body - Strip 1, GPIO 25, 300 LEDs: 0 - 299) <<<
+#define SEC_BOT_LEFT_LEG_START       0
+#define SEC_BOT_LEFT_LEG_END       110
+
+#define SEC_BOT_RIGHT_LEG_START    111
+#define SEC_BOT_RIGHT_LEG_END      224
+
+#define SEC_BOT_BELT_START         225
+#define SEC_BOT_BELT_END           299
 
 // ================= LED ARRAYS =================
 CRGB stripUpper[LEDS_PER_STRIP];
@@ -62,6 +97,30 @@ typedef struct __attribute__((packed)) {
 
 Packet incoming;
 uint32_t packetsReceived = 0;
+
+// Helper: Converts strip & LED range to human-readable section name for Serial Monitor
+const char* getSectionName(uint8_t strip, uint16_t startLed, uint16_t endLed)
+{
+    if (strip == STRIP_BOTH && startLed == 0 && endLed >= 299) return "FULL SUIT";
+    if (strip == STRIP_UPPER) {
+        if (startLed == 0 && endLed >= 299) return "UPPER BODY (ALL)";
+        if (startLed == SEC_TOP_LEFT_ZIPPER_START && endLed == SEC_TOP_LEFT_ZIPPER_END) return "LEFT ZIPPER";
+        if (startLed == SEC_TOP_LEFT_HAND_START && endLed == SEC_TOP_LEFT_HAND_END) return "LEFT HAND";
+        if (startLed == SEC_TOP_HEAD_START && endLed == SEC_TOP_HEAD_END) return "HOOD/HEAD";
+        if (startLed == SEC_TOP_RIGHT_HAND_START && endLed == SEC_TOP_RIGHT_HAND_END) return "RIGHT HAND";
+        if (startLed == SEC_TOP_RIGHT_ZIPPER_START && endLed == SEC_TOP_RIGHT_ZIPPER_END) return "RIGHT ZIPPER";
+        return "UPPER CUSTOM";
+    }
+    if (strip == STRIP_LOWER) {
+        if (startLed == 0 && endLed >= 299) return "LOWER BODY (ALL)";
+        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_LEFT_LEG_END) return "LEFT LEG";
+        if (startLed == SEC_BOT_RIGHT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "RIGHT LEG";
+        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "BOTH LEGS";
+        if (startLed == SEC_BOT_BELT_START && endLed == SEC_BOT_BELT_END) return "BELT AREA";
+        return "LOWER CUSTOM";
+    }
+    return "CUSTOM";
+}
 
 // ================= PACKET PROCESSING LOGIC =================
 void processIncomingPacket(const uint8_t *senderMac, const uint8_t *data, int len)
@@ -114,17 +173,15 @@ void processIncomingPacket(const uint8_t *senderMac, const uint8_t *data, int le
 
     FastLED.show();
 
-    // Print command execution details to Serial Monitor for live verification
-    const char *stripName = (incoming.strip == STRIP_UPPER) ? "UPPER (0)" :
-                           ((incoming.strip == STRIP_LOWER) ? "LOWER (1)" : "BOTH (UPPER+LOWER)");
+    // Print command execution details with Section Name to Serial Monitor
+    const char *secName = getSectionName(incoming.strip, incoming.startLed, end);
+    const char *scopeName = (incoming.slaveId == SLAVE_ALL) ? "ALL DANCERS" : "DIRECT";
 
-    const char *scopeName = (incoming.slaveId == SLAVE_ALL) ? "ALL DANCERS" : "DIRECT DANCER";
-
-    Serial.printf("[DANCER %d] Applied Cue #%u [%s]: Strip=%s | LEDs %u-%u | RGB(%u, %u, %u)\n",
+    Serial.printf("[DANCER %d] Cue #%-4u [%-11s]: %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
                   MY_SLAVE_ID,
                   packetsReceived,
                   scopeName,
-                  stripName,
+                  secName,
                   incoming.startLed,
                   end,
                   incoming.r, incoming.g, incoming.b);
@@ -171,8 +228,16 @@ void setup()
     Serial.print("ESP32 MAC Address: ");
     Serial.println(WiFi.macAddress());
     Serial.printf("Wi-Fi Channel:     %d\n", WIFI_CHANNEL);
-    Serial.printf("Upper Strip GPIO:  Pin %d (%d LEDs)\n", STRIP_UPPER_PIN, LEDS_PER_STRIP);
-    Serial.printf("Lower Strip GPIO:  Pin %d (%d LEDs)\n", STRIP_LOWER_PIN, LEDS_PER_STRIP);
+    Serial.printf("Upper Strip (GPIO %d, %d LEDs):\n", STRIP_UPPER_PIN, LEDS_PER_STRIP);
+    Serial.printf("  - Left Zipper:  %d to %d\n", SEC_TOP_LEFT_ZIPPER_START, SEC_TOP_LEFT_ZIPPER_END);
+    Serial.printf("  - Left Hand:    %d to %d\n", SEC_TOP_LEFT_HAND_START, SEC_TOP_LEFT_HAND_END);
+    Serial.printf("  - Hood / Head:  %d to %d\n", SEC_TOP_HEAD_START, SEC_TOP_HEAD_END);
+    Serial.printf("  - Right Hand:   %d to %d\n", SEC_TOP_RIGHT_HAND_START, SEC_TOP_RIGHT_HAND_END);
+    Serial.printf("  - Right Zipper: %d to %d\n", SEC_TOP_RIGHT_ZIPPER_START, SEC_TOP_RIGHT_ZIPPER_END);
+    Serial.printf("Lower Strip (GPIO %d, %d LEDs):\n", STRIP_LOWER_PIN, LEDS_PER_STRIP);
+    Serial.printf("  - Left Leg:     %d to %d\n", SEC_BOT_LEFT_LEG_START, SEC_BOT_LEFT_LEG_END);
+    Serial.printf("  - Right Leg:    %d to %d\n", SEC_BOT_RIGHT_LEG_START, SEC_BOT_RIGHT_LEG_END);
+    Serial.printf("  - Belt Area:    %d to %d\n", SEC_BOT_BELT_START, SEC_BOT_BELT_END);
     Serial.printf("Brightness:        %d / 255\n", BRIGHTNESS);
     Serial.println("-------------------------------------------------------");
 
