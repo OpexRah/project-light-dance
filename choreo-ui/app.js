@@ -347,6 +347,16 @@ function initTimeline() {
   document.getElementById('btnJumpStart').addEventListener('click', () => seekToTime(0));
   document.getElementById('btnJumpEnd').addEventListener('click', () => seekToTime(state.totalDurationMs));
 
+  // Stepping controls (move left/right by smallest unit)
+  const btnStepBack = document.getElementById('btnStepBackward');
+  if (btnStepBack) {
+    btnStepBack.addEventListener('click', () => stepTimeline(-1));
+  }
+  const btnStepFwd = document.getElementById('btnStepForward');
+  if (btnStepFwd) {
+    btnStepFwd.addEventListener('click', () => stepTimeline(1));
+  }
+
   // Zoom controls
   document.getElementById('btnZoomIn').addEventListener('click', () => setZoom(state.pxPerSec * 1.3));
   document.getElementById('btnZoomOut').addEventListener('click', () => setZoom(state.pxPerSec / 1.3));
@@ -508,36 +518,95 @@ function renderWaveform() {
   }
 }
 
-// ================= CUE MARKERS TRACK RENDERING =================
-function renderCueMarkers() {
-  const track = document.getElementById('cuesTrack');
-  track.innerHTML = '';
+// ================= CUE MARKERS TRACK RENDERING (WITH DYNAMIC DOWNWARD LAYER STACKING) =================
+// Calculates non-overlapping vertical layers so that concurrent/overlapping cues stack downwards
+function calculateCueLayers(visibleCues) {
+  // Sort cues chronologically by timeMs, then duration
+  const sorted = [...visibleCues].sort((a, b) => a.timeMs - b.timeMs || a.durationMs - b.durationMs);
+  const layerEndTimes = []; // Tracks the end timestamp of the latest cue in each layer
 
-  state.cues.forEach(cue => {
-    // Only show if matches dancer filter
-    if (state.activeDancerFilter !== 0 && !cue.dancers.includes(0) && !cue.dancers.includes(state.activeDancerFilter)) {
-      return;
+  sorted.forEach(cue => {
+    let assignedLayer = -1;
+    const start = cue.timeMs;
+    const end = cue.timeMs + cue.durationMs;
+
+    // Check existing layers to find the first one that has finished before this cue starts
+    for (let l = 0; l < layerEndTimes.length; l++) {
+      if (layerEndTimes[l] <= start) {
+        assignedLayer = l;
+        layerEndTimes[l] = end;
+        break;
+      }
     }
 
+    // If all existing layers overlap, create a new layer downwards
+    if (assignedLayer === -1) {
+      assignedLayer = layerEndTimes.length;
+      layerEndTimes.push(end);
+    }
+
+    cue.layer = assignedLayer;
+  });
+
+  return Math.max(1, layerEndTimes.length);
+}
+
+function renderCueMarkers() {
+  const track = document.getElementById('cuesTrack');
+  const viewport = document.getElementById('timelineViewport');
+  track.innerHTML = '';
+
+  // Filter cues according to dancer selection
+  const visibleCues = state.cues.filter(cue => {
+    if (state.activeDancerFilter !== 0 && !cue.dancers.includes(0) && !cue.dancers.includes(state.activeDancerFilter)) {
+      return false;
+    }
+    return true;
+  });
+
+  // Calculate dynamic layers for overlapping cues
+  const totalLayers = calculateCueLayers(visibleCues);
+
+  const CUE_HEIGHT = 26;
+  const CUE_GAP = 5;
+  const trackHeight = Math.max(130, totalLayers * (CUE_HEIGHT + CUE_GAP) + 35);
+  track.style.height = `${trackHeight}px`;
+  viewport.style.height = `${96 + trackHeight}px`;
+
+  visibleCues.forEach(cue => {
     const leftPx = (cue.timeMs / 1000) * state.pxPerSec;
-    const widthPx = Math.max(16, (cue.durationMs / 1000) * state.pxPerSec);
+    const widthPx = Math.max(20, (cue.durationMs / 1000) * state.pxPerSec);
+    const topPx = (cue.layer || 0) * (CUE_HEIGHT + CUE_GAP);
 
     const block = document.createElement('div');
     block.className = `cue-marker-block ${cue.id === state.selectedCueId ? 'selected' : ''}`;
     block.style.left = `${leftPx}px`;
+    block.style.top = `${topPx}px`;
     block.style.width = `${widthPx}px`;
     block.style.backgroundColor = cue.color;
 
-    // Dancer badge text
+    // High contrast text based on brightness
+    const rgb = hexToRgb(cue.color);
+    const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+    const textColor = brightness > 140 ? '#07090e' : '#ffffff';
+    block.style.color = textColor;
+
+    // Dancer badge text & section summary
     const dancerLabel = cue.dancers.includes(0) ? 'ALL' : `D${cue.dancers.join(',')}`;
-    const secLabel = cue.sections.length === 8 ? 'SUIT' : `${cue.sections.length} Secs`;
+    let secLabel = 'SUIT';
+    if (cue.sections.length === 1) {
+      const secKey = cue.sections[0];
+      secLabel = SECTIONS[secKey] ? SECTIONS[secKey].name.split('/')[0].trim() : secKey;
+    } else if (cue.sections.length < 8) {
+      secLabel = `${cue.sections.length} Secs`;
+    }
 
     block.innerHTML = `
-      <span>${secLabel}</span>
-      <span class="cue-badge">${dancerLabel}</span>
+      <span style="font-weight:700;">${secLabel}</span>
+      <span class="cue-badge" style="color:${textColor}; border:1px solid ${textColor}40;">${dancerLabel}</span>
     `;
 
-    block.title = `${cue.timeMs}ms (${cue.durationMs}ms) &bull; ${dancerLabel} &bull; ${cue.color}`;
+    block.title = `${cue.timeMs}ms (${cue.durationMs}ms) &bull; Layer ${cue.layer + 1} &bull; ${dancerLabel} &bull; ${secLabel} &bull; ${cue.color}`;
 
     // Click marker to inspect & edit
     block.addEventListener('click', (e) => {
@@ -548,7 +617,16 @@ function renderCueMarkers() {
     track.appendChild(block);
   });
 
-  document.getElementById('cueCounterBadge').textContent = `${state.cues.length} Cues`;
+  const layerInfo = totalLayers > 1 ? ` (${totalLayers} Layers)` : '';
+  document.getElementById('cueCounterBadge').textContent = `${state.cues.length} Cues${layerInfo}`;
+}
+
+// Stepping helper: moves playhead left or right by the selected unit (10ms, 25ms, 50ms, 100ms)
+function stepTimeline(direction) {
+  const unitSelect = document.getElementById('stepUnitSelect');
+  const stepMs = unitSelect ? parseInt(unitSelect.value) || 25 : 25;
+  const newTime = Math.max(0, Math.min(state.totalDurationMs, state.currentTimeMs + direction * stepMs));
+  seekToTime(newTime);
 }
 
 // ================= PLAYBACK CONTROLS =================
@@ -1267,12 +1345,18 @@ function downloadFile(filename, content, type) {
 // ================= KEYBOARD SHORTCUTS =================
 function initKeyboardShortcuts() {
   window.addEventListener('keydown', (e) => {
-    // Avoid shortcuts if typing in text inputs
-    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    // Avoid shortcuts if typing in text inputs or textareas
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
 
     if (e.code === 'Space') {
       e.preventDefault();
       togglePlayPause();
+    } else if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      stepTimeline(e.shiftKey ? -4 : -1);
+    } else if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      stepTimeline(e.shiftKey ? 4 : 1);
     } else if (e.code === 'KeyM') {
       e.preventDefault();
       createCueAtPlayhead();
@@ -1287,36 +1371,25 @@ function initKeyboardShortcuts() {
 }
 
 // ================= DEFAULT CHOREOGRAPHY ROUTINE =================
-// Pre-loads the rich section-wise routine matching the physical show
+// Pre-loads the user's choreography routine with layer stacking
 function loadDefaultRoutine() {
   state.cues = [
-    // Phase 1: Ground-Up Build
-    { id: 'c1', timeMs: 0,    durationMs: 1500, dancers: [0], sections: ['belt'], color: '#ffaa00', r: 255, g: 170, b: 0 },
-    { id: 'c2', timeMs: 1500, durationMs: 1500, dancers: [0], sections: ['left-leg', 'right-leg'], color: '#00b4d8', r: 0, g: 180, b: 216 },
-    { id: 'c3', timeMs: 3000, durationMs: 1500, dancers: [0], sections: ['left-zipper', 'right-zipper'], color: '#00f3ff', r: 0, g: 243, b: 255 },
-    { id: 'c4', timeMs: 4500, durationMs: 1500, dancers: [0], sections: ['left-hand', 'right-hand'], color: '#9d4edd', r: 157, g: 78, b: 221 },
-    { id: 'c5', timeMs: 6000, durationMs: 1500, dancers: [0], sections: ['head'], color: '#ffffff', r: 255, g: 255, b: 255 },
+    // User's latest choreography cues
+    { id: 'c1', timeMs: 1437, durationMs: 500, dancers: [1], sections: ['belt', 'left-leg', 'right-leg'], color: '#00ff66', r: 0, g: 255, b: 102 },
+    { id: 'c2', timeMs: 1937, durationMs: 250, dancers: [1], sections: ['right-leg'], color: '#ff00bb', r: 255, g: 0, b: 187 },
+    { id: 'c3', timeMs: 2175, durationMs: 250, dancers: [1], sections: ['left-leg'], color: '#9900ff', r: 153, g: 0, b: 255 },
+    { id: 'c4', timeMs: 2412, durationMs: 250, dancers: [1], sections: ['belt'], color: '#0066ff', r: 0, g: 102, b: 255 },
+    { id: 'c5', timeMs: 2687, durationMs: 500, dancers: [1], sections: ['left-leg', 'right-leg'], color: '#ffee00', r: 255, g: 238, b: 0 },
+    { id: 'c6', timeMs: 2962, durationMs: 500, dancers: [1], sections: ['belt'], color: '#ff0044', r: 255, g: 0, b: 68 },
+    { id: 'c7', timeMs: 3337, durationMs: 500, dancers: [1], sections: ['belt', 'left-leg'], color: '#00ff66', r: 0, g: 255, b: 102 },
+    { id: 'c8', timeMs: 3612, durationMs: 500, dancers: [1], sections: ['belt', 'left-leg', 'right-leg'], color: '#00ff66', r: 0, g: 255, b: 102 },
 
-    // Phase 2: Full Suit Washes
-    { id: 'c6', timeMs: 7500,  durationMs: 2000, dancers: [0], sections: Object.keys(SECTIONS), color: '#ff0044', r: 255, g: 0, b: 68 },
-    { id: 'c7', timeMs: 9500,  durationMs: 2000, dancers: [0], sections: Object.keys(SECTIONS), color: '#00ff88', r: 0, g: 255, b: 136 },
-    { id: 'c8', timeMs: 11500, durationMs: 2000, dancers: [0], sections: Object.keys(SECTIONS), color: '#0066ff', r: 0, g: 102, b: 255 },
-
-    // Phase 3: Alternating Limbs
-    { id: 'c9',  timeMs: 14000, durationMs: 1800, dancers: [0], sections: ['left-hand'], color: '#ff0044', r: 255, g: 0, b: 68 },
-    { id: 'c10', timeMs: 14000, durationMs: 1800, dancers: [0], sections: ['right-hand'], color: '#00f3ff', r: 0, g: 243, b: 255 },
-    { id: 'c11', timeMs: 16000, durationMs: 1800, dancers: [0], sections: ['left-hand'], color: '#00f3ff', r: 0, g: 243, b: 255 },
-    { id: 'c12', timeMs: 16000, durationMs: 1800, dancers: [0], sections: ['right-hand'], color: '#ff0044', r: 255, g: 0, b: 68 },
-
-    // Phase 4: Dancer 3 Center Lead Solo
-    { id: 'c13', timeMs: 18500, durationMs: 3000, dancers: [3], sections: Object.keys(SECTIONS), color: '#ffee00', r: 255, g: 238, b: 0 },
-    { id: 'c14', timeMs: 18500, durationMs: 3000, dancers: [1, 2, 4, 5], sections: ['belt'], color: '#555555', r: 85, g: 85, b: 85 },
-
-    // Phase 5: Wings Duo (D1 & D5)
-    { id: 'c15', timeMs: 22000, durationMs: 3000, dancers: [1, 5], sections: ['head', 'left-hand', 'right-hand'], color: '#ff00bb', r: 255, g: 0, b: 187 },
-
-    // Climax Flash & Blackout
-    { id: 'c16', timeMs: 26000, durationMs: 2500, dancers: [0], sections: Object.keys(SECTIONS), color: '#ffffff', r: 255, g: 255, b: 255 }
+    // Synchronized Troupe Cues (All 5 Dancers)
+    { id: 'c9',  timeMs: 4500, durationMs: 1500, dancers: [0], sections: ['head', 'left-hand', 'right-hand'], color: '#00ffff', r: 0, g: 255, b: 255 },
+    { id: 'c10', timeMs: 6000, durationMs: 1500, dancers: [0], sections: ['left-zipper', 'right-zipper'], color: '#00f3ff', r: 0, g: 243, b: 255 },
+    { id: 'c11', timeMs: 7500, durationMs: 2000, dancers: [0], sections: Object.keys(SECTIONS), color: '#ff0044', r: 255, g: 0, b: 68 },
+    { id: 'c12', timeMs: 9500, durationMs: 2000, dancers: [0], sections: Object.keys(SECTIONS), color: '#00ff88', r: 0, g: 255, b: 136 },
+    { id: 'c13', timeMs: 12000, durationMs: 2500, dancers: [0], sections: Object.keys(SECTIONS), color: '#ffffff', r: 255, g: 255, b: 255 }
   ];
 
   renderCueMarkers();

@@ -85,16 +85,16 @@
         <div class="stage-header">
           <div class="stage-title-group">
             <span class="badge badge-accent">LIVE PREVIEW</span>
-            <h2>Stage Formation &bull; V-Shape (5 Dancers)</h2>
+            <h2>Stage Formation &bull; Line Formation (5 Dancers)</h2>
           </div>
           <div class="stage-controls">
             <div class="dancer-toggles" id="dancerToggles">
               <button class="toggle-btn active" data-dancer="0" title="All Dancers">ALL</button>
-              <button class="toggle-btn" data-dancer="1" title="Dancer 1 (Wing Left)">D1</button>
+              <button class="toggle-btn" data-dancer="1" title="Dancer 1 (Left)">D1</button>
               <button class="toggle-btn" data-dancer="2" title="Dancer 2 (Mid Left)">D2</button>
-              <button class="toggle-btn" data-dancer="3" title="Dancer 3 (Front Lead)">D3</button>
+              <button class="toggle-btn" data-dancer="3" title="Dancer 3 (Center)">D3</button>
               <button class="toggle-btn" data-dancer="4" title="Dancer 4 (Mid Right)">D4</button>
-              <button class="toggle-btn" data-dancer="5" title="Dancer 5 (Wing Right)">D5</button>
+              <button class="toggle-btn" data-dancer="5" title="Dancer 5 (Right)">D5</button>
             </div>
             <button class="btn btn-ghost btn-sm" id="btnTestFlashSuit" title="Quick 1-second white flash test">Flash Test</button>
           </div>
@@ -105,36 +105,36 @@
           <div class="stage-grid"></div>
           <div class="stage-spotlight"></div>
 
-          <!-- 5 Dancers in V-Formation matching Image 1 -->
-          <div class="stage-formation" id="stageFormation">
+          <!-- 5 Dancers in Line Formation -->
+          <div class="stage-formation line-formation" id="stageFormation">
             
-            <!-- Dancer 1: Wing Left -->
-            <div class="dancer-node pos-wing-left" id="dancerNode1" data-dancer="1">
-              <div class="dancer-label">D1 <span>Wing L</span></div>
+            <!-- Dancer 1: Left -->
+            <div class="dancer-node" id="dancerNode1" data-dancer="1">
+              <div class="dancer-label">D1 <span>Left</span></div>
               <div class="dancer-suit-wrap" id="suitWrap1"></div>
             </div>
 
             <!-- Dancer 2: Mid Left -->
-            <div class="dancer-node pos-mid-left" id="dancerNode2" data-dancer="2">
+            <div class="dancer-node" id="dancerNode2" data-dancer="2">
               <div class="dancer-label">D2 <span>Mid L</span></div>
               <div class="dancer-suit-wrap" id="suitWrap2"></div>
             </div>
 
-            <!-- Dancer 3: Front Center Lead -->
-            <div class="dancer-node pos-front-center" id="dancerNode3" data-dancer="3">
-              <div class="dancer-label lead">D3 <span>CENTER LEAD</span></div>
+            <!-- Dancer 3: Center -->
+            <div class="dancer-node" id="dancerNode3" data-dancer="3">
+              <div class="dancer-label lead">D3 <span>CENTER</span></div>
               <div class="dancer-suit-wrap" id="suitWrap3"></div>
             </div>
 
             <!-- Dancer 4: Mid Right -->
-            <div class="dancer-node pos-mid-right" id="dancerNode4" data-dancer="4">
+            <div class="dancer-node" id="dancerNode4" data-dancer="4">
               <div class="dancer-label">D4 <span>Mid R</span></div>
               <div class="dancer-suit-wrap" id="suitWrap4"></div>
             </div>
 
-            <!-- Dancer 5: Wing Right -->
-            <div class="dancer-node pos-wing-right" id="dancerNode5" data-dancer="5">
-              <div class="dancer-label">D5 <span>Wing R</span></div>
+            <!-- Dancer 5: Right -->
+            <div class="dancer-node" id="dancerNode5" data-dancer="5">
+              <div class="dancer-label">D5 <span>Right</span></div>
               <div class="dancer-suit-wrap" id="suitWrap5"></div>
             </div>
 
@@ -159,12 +159,24 @@
                 </svg>
               </button>
 
+              <button class="btn-icon" id="btnStepBackward" title="Step backward by smallest unit (Left Arrow)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="15 18 9 12 15 6"/>
+                </svg>
+              </button>
+
               <button class="btn-icon btn-play" id="btnPlayPause" title="Play / Pause (Spacebar)">
                 <svg class="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
                   <polygon points="5 3 19 12 5 21 5 3"/>
                 </svg>
                 <svg class="icon-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="display:none;">
                   <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+              </button>
+
+              <button class="btn-icon" id="btnStepForward" title="Step forward by smallest unit (Right Arrow)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="9 18 15 12 9 6"/>
                 </svg>
               </button>
 
@@ -179,6 +191,16 @@
                   <rect x="6" y="6" width="12" height="12"/>
                 </svg>
               </button>
+
+              <div class="step-unit-control" title="Smallest stepping increment">
+                <label for="stepUnitSelect">Step:</label>
+                <select id="stepUnitSelect">
+                  <option value="10">10ms</option>
+                  <option value="25" selected>25ms</option>
+                  <option value="50">50ms</option>
+                  <option value="100">100ms</option>
+                </select>
+              </div>
 
               <div class="timecode-display">
                 <span class="time-main" id="timecodeCurrent">00:00.000</span>

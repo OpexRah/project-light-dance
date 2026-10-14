@@ -413,66 +413,64 @@ body {
   pointer-events: none;
 }
 
-/* ================= 5 DANCERS V-FORMATION ================= */
-/* Matching Image 1: Inverted V (Center Dancer 3 is forward, D1 & D5 are wing back) */
+/* ================= 5 DANCERS LINE FORMATION ================= */
 .stage-formation {
   position: relative;
-  width: 92%;
-  max-width: 1200px;
-  height: 90%;
+  width: 95%;
+  max-width: 1280px;
+  height: 85%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: space-evenly;
   z-index: 5;
 }
 
 .dancer-node {
-  position: absolute;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), filter 0.3s ease;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), filter 0.25s ease;
 }
 
 .dancer-node:hover {
-  transform: scale(1.08) !important;
-  filter: drop-shadow(0 0 15px rgba(0, 243, 255, 0.5));
+  transform: scale(1.08) translateY(-4px);
+  filter: drop-shadow(0 0 16px rgba(0, 243, 255, 0.5));
 }
 
 .dancer-node.dimmed {
   opacity: 0.3;
 }
 
-/* V-Formation Positioning (Percentages) */
-.pos-wing-left {
-  left: 3%;
-  top: 15%;
-  transform: scale(0.85);
+/* Step Unit Selector */
+.step-unit-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
-.pos-mid-left {
-  left: 23%;
-  top: 30%;
-  transform: scale(0.92);
+.step-unit-control label {
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
 }
 
-.pos-front-center {
-  left: 50%;
-  top: 48%;
-  transform: translate(-50%, 0) scale(1.05);
-}
-
-.pos-mid-right {
-  left: 65%;
-  top: 30%;
-  transform: scale(0.92);
-}
-
-.pos-wing-right {
-  right: 3%;
-  top: 15%;
-  transform: scale(0.85);
+.step-unit-control select {
+  background: transparent;
+  border: none;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
 }
 
 .dancer-label {
@@ -646,14 +644,14 @@ body {
 .timeline-scroll-wrap {
   flex: 1;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   position: relative;
   background: #080b12;
 }
 
 .timeline-viewport {
   position: relative;
-  height: 100%;
+  min-height: 100%;
   min-width: 100%;
 }
 
@@ -664,6 +662,7 @@ body {
   width: 100%;
   height: 26px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 10;
 }
 
 .waveform-canvas {
@@ -673,6 +672,7 @@ body {
   width: 100%;
   height: 70px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  z-index: 5;
 }
 
 .cues-track {
@@ -680,38 +680,40 @@ body {
   top: 96px;
   left: 0;
   right: 0;
-  bottom: 0;
+  min-height: 140px;
   cursor: crosshair;
 }
 
-/* Cue Block Marker on Timeline */
+/* Cue Block Marker on Timeline - Layer Stackable */
 .cue-marker-block {
   position: absolute;
-  height: 32px;
-  border-radius: 5px;
-  padding: 2px 6px;
-  font-size: 0.7rem;
+  height: 26px;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.68rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 4px;
   color: #07090e;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-  transition: transform 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: filter 0.15s ease, outline 0.15s ease;
   user-select: none;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  white-space: nowrap;
 }
 
 .cue-marker-block:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.2);
+  filter: brightness(1.25);
   z-index: 20;
 }
 
 .cue-marker-block.selected {
   outline: 2px solid #ffffff;
-  box-shadow: 0 0 15px #ffffff;
+  box-shadow: 0 0 14px #ffffff;
   z-index: 25;
 }
 

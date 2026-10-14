@@ -266,12 +266,14 @@ The project includes an interactive web-based visual choreographing studio locat
 1. **Audio Drag-and-Drop & Waveform Visualization:**
    - Drop any audio file (`.mp3`, `.wav`, `.ogg`) to automatically decode and render its visual waveform using the Web Audio API.
    - Includes a built-in **"Load Demo Beat"** generator that produces an electronic dance track for instant testing without uploading files.
-2. **5-Dancer Stage Visualizer in V-Formation:**
-   - Dancers arranged in the stage V-formation (Dancer 3 center lead, Dancers 2 & 4 mid, Dancers 1 & 5 wings back).
+2. **5-Dancer Stage Visualizer in Line Formation:**
+   - Dancers arranged horizontally in a straight line across the stage (`D1 Left`, `D2 Mid L`, `D3 Center`, `D4 Mid R`, `D5 Right`).
    - Suits modeled as scalable SVG vector paths with exact LED wireframe sections (Hood, Zippers, Hands, Belt, Legs).
    - Real-time neon glow lighting during playback.
-3. **Interactive Timeline & Marker Editor:**
+3. **Interactive Timeline & Dynamic Layer Stacking:**
    - Zoomable and scrollable timeline with millisecond time ruler and draggable playhead.
+   - **Downward Layer Stacking:** Overlapping and concurrent cues automatically stack downwards into distinct vertical lanes/layers, making simultaneous multi-section cues (e.g. Left Leg + Right Leg at the same timestamp) easy to identify and click.
+   - **Stepping Controls:** Dedicated Step Backward / Step Forward buttons and Left/Right Arrow keyboard shortcuts to advance or rewind by the smallest unit (customizable via dropdown: 10ms, 25ms, 50ms, 100ms; hold Shift for 4x step).
    - Press **Spacebar** to toggle Play/Pause, or **M** to drop a cue marker at the playhead.
    - Configure start time, duration, target dancers (`ALL` or `D1` to `D5`), individual body sections, and hex/RGB color swatches.
 4. **Seamless Export & Import:**
