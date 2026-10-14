@@ -14,6 +14,23 @@ const SECTIONS = {
   'right-leg':    { name: 'Right Leg',    strip: 1, startLed: 111, endLed: 224, defaultColor: '#ef4444', macro: 'CUE_RIGHT_LEG' }
 };
 
+// Cached section keys & index lookups to avoid recomputing Object.keys each frame
+const SECTION_KEYS = Object.keys(SECTIONS);
+const SECTION_INDEX = {};
+SECTION_KEYS.forEach((key, i) => { SECTION_INDEX[key] = i; });
+
+// Cached LED path DOM element references: ledElements[dancer][sectionKey]
+const ledElements = {};
+function cacheLedElements() {
+  for (let d = 1; d <= 5; d++) {
+    ledElements[d] = {};
+    for (let s = 0; s < SECTION_KEYS.length; s++) {
+      const key = SECTION_KEYS[s];
+      ledElements[d][key] = document.querySelector(`.led-path[data-dancer="${d}"][data-sec="${key}"]`);
+    }
+  }
+}
+
 // ================= STATE =================
 const state = {
   audioContext: null,
@@ -32,6 +49,9 @@ const state = {
   
   // Active Filter Dancer (0 = ALL)
   activeDancerFilter: 0,
+
+  // Magnet snap mode: cue edges snap to other cues, grid, and playhead
+  magnetEnabled: false,
 
   // Selected Cue for editing
   selectedCueId: null,
@@ -126,6 +146,8 @@ function initSuitVectors() {
     }
   }
 
+  cacheLedElements();
+
   // Interactive section clicking directly on suit visualizer
   document.querySelectorAll('.led-path').forEach(el => {
     el.addEventListener('click', (e) => {
@@ -174,15 +196,8 @@ function initAudio() {
   // Built-in Demo Track Generator
   document.getElementById('btnLoadDemoTrack').addEventListener('click', loadSynthesizedDemoBeat);
 
-  // Playback Events
-  state.audioElement.addEventListener('timeupdate', () => {
-    if (state.isPlaying) {
-      state.currentTimeMs = Math.floor(state.audioElement.currentTime * 1000);
-      updatePlayheadPosition();
-      renderStageLightingAtCurrentTime();
-    }
-  });
-
+  // Playback is driven by a single requestAnimationFrame loop (see playbackAnimationLoop)
+  // for smooth, synchronized stage rendering regardless of the audio element's sparse timeupdate events.
   state.audioElement.addEventListener('ended', () => {
     pausePlayback();
     seekToTime(0);
@@ -361,6 +376,15 @@ function initTimeline() {
   document.getElementById('btnZoomIn').addEventListener('click', () => setZoom(state.pxPerSec * 1.3));
   document.getElementById('btnZoomOut').addEventListener('click', () => setZoom(state.pxPerSec / 1.3));
   document.getElementById('btnZoomFit').addEventListener('click', fitZoomToScreen);
+
+  // Magnet snap toggle
+  const magnetBtn = document.getElementById('btnMagnetToggle');
+  if (magnetBtn) {
+    magnetBtn.addEventListener('click', () => {
+      state.magnetEnabled = !state.magnetEnabled;
+      magnetBtn.classList.toggle('active', state.magnetEnabled);
+    });
+  }
 
   // Clicking on timeline track seeks playhead
   viewport.addEventListener('click', (e) => {
@@ -552,6 +576,9 @@ function calculateCueLayers(visibleCues) {
 }
 
 function renderCueMarkers() {
+  // Refresh cached per-cue target/section indices before rendering
+  for (let i = 0; i < state.cues.length; i++) indexCueTargets(state.cues[i]);
+
   const track = document.getElementById('cuesTrack');
   const viewport = document.getElementById('timelineViewport');
   track.innerHTML = '';
@@ -608,6 +635,17 @@ function renderCueMarkers() {
 
     block.title = `${cue.timeMs}ms (${cue.durationMs}ms) &bull; Layer ${cue.layer + 1} &bull; ${dancerLabel} &bull; ${secLabel} &bull; ${cue.color}`;
 
+    // Resize handles (drag left/right edges to shrink or expand)
+    const hLeft = document.createElement('div');
+    hLeft.className = 'resize-handle left';
+    const hRight = document.createElement('div');
+    hRight.className = 'resize-handle right';
+    block.appendChild(hLeft);
+    block.appendChild(hRight);
+
+    attachResizeHandle(hLeft, cue, 'left', block);
+    attachResizeHandle(hRight, cue, 'right', block);
+
     // Click marker to inspect & edit
     block.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -621,6 +659,115 @@ function renderCueMarkers() {
   document.getElementById('cueCounterBadge').textContent = `${state.cues.length} Cues${layerInfo}`;
 }
 
+// ================= CUE BLOCK RESIZE (DRAG EDGES) =================
+// Live-updates a block's position/width while dragging a left or right handle,
+// converting pixel deltas to milliseconds via the current pxPerSec zoom.
+function currentGridStepMs() {
+  const sel = document.getElementById('stepUnitSelect');
+  return (sel && parseInt(sel.value)) || 25;
+}
+
+// Collect candidate snap points: grid lines, timeline bounds, other cue
+// boundaries, and the current playhead position.
+function collectSnapPoints(excludeCue) {
+  const stepMs = currentGridStepMs();
+  const points = [0, state.totalDurationMs];
+  for (let ms = stepMs; ms < state.totalDurationMs; ms += stepMs) points.push(ms);
+  points.push(state.currentTimeMs);
+  for (let i = 0; i < state.cues.length; i++) {
+    const c = state.cues[i];
+    if (c === excludeCue) continue;
+    points.push(c.timeMs);
+    points.push(c.timeMs + c.durationMs);
+  }
+  return points;
+}
+
+// Snap a millisecond value to the nearest snap point within the given
+// threshold (in ms). Returns the original value if nothing is close enough.
+function snapValue(valueMs, excludeCue, thresholdMs) {
+  const points = collectSnapPoints(excludeCue);
+  let best = valueMs;
+  let bestDist = thresholdMs;
+  for (let i = 0; i < points.length; i++) {
+    const d = Math.abs(valueMs - points[i]);
+    if (d <= bestDist) { bestDist = d; best = points[i]; }
+  }
+  return best;
+}
+
+function updateCueBlockVisual(cue, block) {
+  block.style.left = `${(cue.timeMs / 1000) * state.pxPerSec}px`;
+  block.style.width = `${Math.max(20, (cue.durationMs / 1000) * state.pxPerSec)}px`;
+}
+
+function updateCueInspectorFields(cue) {
+  document.getElementById('cueTimeInput').value = cue.timeMs;
+  document.getElementById('cueDurationInput').value = cue.durationMs;
+}
+
+function attachResizeHandle(handle, cue, side, block) {
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startTimeMs = cue.timeMs;
+    const startDurMs = cue.durationMs;
+    const pxPerSec = state.pxPerSec;
+    const MIN_MS = 10;
+
+    document.body.classList.add('resizing');
+
+    const onMove = (ev) => {
+      const dxMs = ((ev.clientX - startX) / pxPerSec) * 1000;
+      const endMs = startTimeMs + startDurMs; // original right edge
+      const thresholdMs = Math.max(MIN_MS, (8 / pxPerSec) * 1000);
+
+      let newTime = startTimeMs;
+      let newDur = startDurMs;
+
+      if (side === 'right') {
+        // Right handle: snap the moving edge (end), keep start fixed
+        let edge = endMs + dxMs;
+        if (state.magnetEnabled) edge = snapValue(edge, cue, thresholdMs);
+        newDur = edge - startTimeMs;
+        if (newDur < MIN_MS) newDur = MIN_MS;
+        cue.timeMs = startTimeMs;
+        cue.durationMs = Math.round(newDur);
+      } else {
+        // Left handle: snap the moving edge (start), keep the right edge fixed
+        let edge = startTimeMs + dxMs;
+        if (state.magnetEnabled) edge = snapValue(edge, cue, thresholdMs);
+        newTime = edge;
+        let dur = endMs - edge;
+        if (newTime < 0) { newTime = 0; dur = endMs; }
+        if (dur < MIN_MS) { dur = MIN_MS; newTime = endMs - MIN_MS; }
+        cue.timeMs = Math.round(newTime);
+        cue.durationMs = Math.round(dur);
+      }
+
+      updateCueBlockVisual(cue, block);
+      if (state.selectedCueId === cue.id) updateCueInspectorFields(cue);
+      renderStageLightingAtCurrentTime();
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('resizing');
+      renderCueMarkers();
+      if (state.selectedCueId === cue.id) selectCue(cue.id);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+
+  // Prevent the block's click handler from firing when interacting with a handle
+  handle.addEventListener('click', (e) => e.stopPropagation());
+}
+
 // Stepping helper: moves playhead left or right by the selected unit (10ms, 25ms, 50ms, 100ms)
 function stepTimeline(direction) {
   const unitSelect = document.getElementById('stepUnitSelect');
@@ -632,25 +779,36 @@ function stepTimeline(direction) {
 // ================= PLAYBACK CONTROLS =================
 function togglePlayPause() {
   if (state.isPlaying) {
-    pausePlayback();
+    // Audacity-style: when paused, return to where playback was originally placed
+    pauseAndReturnToStart();
   } else {
     startPlayback();
   }
 }
 
+// Pause and scrub back to the position where playback was started.
+function pauseAndReturnToStart() {
+  const returnMs = (state.playbackStartMs != null) ? state.playbackStartMs : state.currentTimeMs;
+  pausePlayback();
+  seekToTime(returnMs);
+}
+
 function startPlayback() {
+  // Remember the position playback began, so pausing returns here
+  state.playbackStartMs = state.currentTimeMs;
   state.isPlaying = true;
   document.querySelector('.icon-play').style.display = 'none';
   document.querySelector('.icon-pause').style.display = 'block';
 
+  // Fallback clock keeps the rAF loop valid even while audio autoplay is resolving
+  state.playbackStartTime = performance.now() - state.currentTimeMs;
+
   if (state.audioLoaded && state.audioElement.src) {
+    // Start HTML5 audio (its currentTime is read by the rAF loop as the time source)
     state.audioElement.currentTime = state.currentTimeMs / 1000;
     state.audioElement.play().catch(e => console.warn(e));
-  } else {
-    // Fallback animation timer if no audio file attached
-    state.playbackStartTime = performance.now() - state.currentTimeMs;
-    requestAnimationFrame(playbackAnimationLoop);
   }
+  requestAnimationFrame(playbackAnimationLoop);
 }
 
 function pausePlayback() {
@@ -661,6 +819,34 @@ function pausePlayback() {
   if (state.audioElement) {
     state.audioElement.pause();
   }
+}
+
+// Unified per-frame playback driver. Reads the authoritative clock
+// (HTML5 audio currentTime, or performance.now fallback) and only re-renders
+// when the millisecond timestamp actually advances, keeping the stage preview smooth.
+let lastPlaybackRenderMs = -1;
+function playbackAnimationLoop() {
+  if (!state.isPlaying) return;
+
+  let newTimeMs;
+  if (state.audioLoaded && state.audioElement && !state.audioElement.paused) {
+    newTimeMs = Math.floor(state.audioElement.currentTime * 1000);
+  } else {
+    newTimeMs = Math.floor(performance.now() - state.playbackStartTime);
+  }
+
+  if (Number.isFinite(newTimeMs) && newTimeMs !== lastPlaybackRenderMs) {
+    lastPlaybackRenderMs = newTimeMs;
+    if (newTimeMs >= state.totalDurationMs) {
+      stopPlayback();
+      return;
+    }
+    state.currentTimeMs = newTimeMs;
+    updatePlayheadPosition();
+    renderStageLightingAtCurrentTime();
+  }
+
+  requestAnimationFrame(playbackAnimationLoop);
 }
 
 function stopPlayback() {
@@ -675,20 +861,6 @@ function seekToTime(timeMs) {
   }
   updatePlayheadPosition();
   renderStageLightingAtCurrentTime();
-}
-
-function playbackAnimationLoop() {
-  if (!state.isPlaying) return;
-  state.currentTimeMs = Math.floor(performance.now() - state.playbackStartTime);
-
-  if (state.currentTimeMs >= state.totalDurationMs) {
-    stopPlayback();
-    return;
-  }
-
-  updatePlayheadPosition();
-  renderStageLightingAtCurrentTime();
-  requestAnimationFrame(playbackAnimationLoop);
 }
 
 function updatePlayheadPosition() {
@@ -721,40 +893,57 @@ function formatTime(ms) {
 
 // ================= STAGE LIGHTING ENGINE =================
 // Computes and renders active LED colors for all 5 dancers at currentTimeMs
+// Precompute per-cue target dancer lists (expanded) whenever cues change,
+// so the render loop never re-checks `includes(0)` per frame.
+function indexCueTargets(cue) {
+  cue._targetsAll = cue.dancers.includes(0);
+  cue._sectionsIdx = cue.sections.map(sec => SECTION_INDEX[sec]).filter(i => i !== undefined);
+}
+
 function renderStageLightingAtCurrentTime() {
   const t = state.currentTimeMs;
 
-  // Active status per dancer (1-5) and per section
-  // Default all sections to black/unlit
-  const dancerStates = {};
-  for (let d = 1; d <= 5; d++) {
-    dancerStates[d] = {};
-    Object.keys(SECTIONS).forEach(sec => {
-      dancerStates[d][sec] = null;
-    });
-  }
+  // Flat color state arrays: dancerStates[d][sectionIndex], default null (unlit)
+  const dancerStates = [
+    null,                     // index 0 unused (dancers are 1-5)
+    new Array(SECTION_KEYS.length).fill(null),
+    new Array(SECTION_KEYS.length).fill(null),
+    new Array(SECTION_KEYS.length).fill(null),
+    new Array(SECTION_KEYS.length).fill(null),
+    new Array(SECTION_KEYS.length).fill(null)
+  ];
 
   // Iterate cues that overlap current time
-  state.cues.forEach(cue => {
+  const n = state.cues.length;
+  for (let ci = 0; ci < n; ci++) {
+    const cue = state.cues[ci];
     if (cue.timeMs <= t && t < cue.timeMs + cue.durationMs) {
-      const targetDancers = cue.dancers.includes(0) ? [1, 2, 3, 4, 5] : cue.dancers;
-      targetDancers.forEach(d => {
-        if (dancerStates[d]) {
-          cue.sections.forEach(sec => {
-            dancerStates[d][sec] = cue.color;
-          });
+      const color = cue.color;
+      const secIdx = cue._sectionsIdx;
+
+      if (cue._targetsAll) {
+        for (let d = 1; d <= 5; d++) {
+          const ds = dancerStates[d];
+          for (let s = 0; s < secIdx.length; s++) ds[secIdx[s]] = color;
         }
-      });
+      } else {
+        const targets = cue.dancers;
+        for (let k = 0; k < targets.length; k++) {
+          const ds = dancerStates[targets[k]];
+          if (!ds) continue;
+          for (let s = 0; s < secIdx.length; s++) ds[secIdx[s]] = color;
+        }
+      }
     }
-  });
+  }
 
-  // Apply to SVG DOM elements
+  // Apply to cached SVG DOM elements
   for (let d = 1; d <= 5; d++) {
-    Object.keys(SECTIONS).forEach(sec => {
-      const el = document.querySelector(`.led-path[data-dancer="${d}"][data-sec="${sec}"]`);
-      if (!el) return;
-
-      const color = dancerStates[d][sec];
+    const ds = dancerStates[d];
+    const elements = ledElements[d];
+    for (let s = 0; s < SECTION_KEYS.length; s++) {
+      const el = elements[SECTION_KEYS[s]];
+      const color = ds[s];
       if (color && color !== '#000000') {
         el.style.stroke = color;
         el.style.strokeWidth = '4.5px';
@@ -766,20 +955,21 @@ function renderStageLightingAtCurrentTime() {
         el.style.filter = 'none';
         el.classList.remove('lit');
       }
-    });
+    }
   }
 }
 
 // Flash Test Button
 document.getElementById('btnTestFlashSuit').addEventListener('click', () => {
   for (let d = 1; d <= 5; d++) {
-    Object.keys(SECTIONS).forEach(sec => {
-      const el = document.querySelector(`.led-path[data-dancer="${d}"][data-sec="${sec}"]`);
+    const elements = ledElements[d];
+    for (let s = 0; s < SECTION_KEYS.length; s++) {
+      const el = elements[SECTION_KEYS[s]];
       if (el) {
         el.style.stroke = '#ffffff';
         el.style.filter = 'drop-shadow(0 0 10px #ffffff)';
       }
-    });
+    }
   }
   setTimeout(() => {
     renderStageLightingAtCurrentTime();
@@ -790,13 +980,14 @@ document.getElementById('btnTestFlashSuit').addEventListener('click', () => {
 document.getElementById('btnBlackoutAll').addEventListener('click', () => {
   pausePlayback();
   for (let d = 1; d <= 5; d++) {
-    Object.keys(SECTIONS).forEach(sec => {
-      const el = document.querySelector(`.led-path[data-dancer="${d}"][data-sec="${sec}"]`);
+    const elements = ledElements[d];
+    for (let s = 0; s < SECTION_KEYS.length; s++) {
+      const el = elements[SECTION_KEYS[s]];
       if (el) {
         el.style.stroke = '#1e293b';
         el.style.filter = 'none';
       }
-    });
+    }
   }
 });
 
@@ -904,9 +1095,12 @@ function initInspector() {
   document.getElementById('btnDuplicateCue').addEventListener('click', duplicateSelectedCue);
   document.getElementById('btnDeleteCue').addEventListener('click', deleteSelectedCue);
 
-  // Add Marker at Playhead Button (Toolbar)
+  // Close / deselect cue builder
+  document.getElementById('btnCloseInspector').addEventListener('click', closeInspector);
+
+  // Add Marker at Playhead Button (Toolbar): adds a real cue, then opens it for editing
   document.getElementById('btnAddMarkerAtPlayhead').addEventListener('click', () => {
-    createCueAtPlayhead();
+    addCueAtPlayhead();
   });
 }
 
@@ -923,10 +1117,24 @@ function setInspectorTargetDancers(dancers) {
   });
 }
 
+// Show / hide the cue builder panel
+function setInspectorVisible(visible) {
+  document.getElementById('cueInspectorPanel').classList.toggle('visible', !!visible);
+}
+
+// Deselect the current cue and hide the builder
+function closeInspector() {
+  state.selectedCueId = null;
+  setInspectorVisible(false);
+  renderCueMarkers();
+}
+
 function selectCue(cueId) {
   state.selectedCueId = cueId;
   const cue = state.cues.find(c => c.id === cueId);
   if (!cue) return;
+
+  setInspectorVisible(true);
 
   document.getElementById('inspectorTitle').textContent = 'EDIT LIGHT CUE';
   document.getElementById('selectedCueBadge').textContent = `Cue ID: ${cueId.slice(-4)}`;
@@ -949,14 +1157,44 @@ function selectCue(cueId) {
   seekToTime(cue.timeMs);
 }
 
-function createCueAtPlayhead() {
-  state.selectedCueId = null;
-  document.getElementById('inspectorTitle').textContent = 'CUE BUILDER &bull; NEW CUE';
-  document.getElementById('selectedCueBadge').textContent = 'Playhead Cue';
-  document.getElementById('btnSaveCueText').textContent = 'Add Cue';
-  document.getElementById('btnDeleteCue').style.display = 'none';
+// Add a new cue at the current playhead using the current inspector settings,
+// then select it so the builder opens for immediate editing.
+function addCueAtPlayhead() {
+  const timeMs = state.currentTimeMs;
+  const durationMs = parseInt(document.getElementById('cueDurationInput').value) || 1000;
+  const color = document.getElementById('cueColorPicker').value;
 
-  document.getElementById('cueTimeInput').value = state.currentTimeMs;
+  // Selected Dancers (default to ALL)
+  const dancers = [];
+  document.querySelectorAll('#dancerSelectGrid .select-chip.active').forEach(c => {
+    dancers.push(parseInt(c.dataset.target));
+  });
+  if (dancers.length === 0) dancers.push(0);
+
+  // Selected Sections (default to full suit)
+  const sections = [];
+  document.querySelectorAll('#sectionsPickerGrid .section-chip.active').forEach(c => {
+    sections.push(c.dataset.sec);
+  });
+  if (sections.length === 0) sections = Object.keys(SECTIONS);
+
+  const rgb = hexToRgb(color);
+  const newCue = {
+    id: 'cue_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+    timeMs,
+    durationMs,
+    dancers,
+    sections,
+    color,
+    r: rgb.r,
+    g: rgb.g,
+    b: rgb.b
+  };
+
+  state.cues.push(newCue);
+  state.cues.sort((a, b) => a.timeMs - b.timeMs);
+  renderCueMarkers();
+  selectCue(newCue.id);
 }
 
 function saveCurrentCue() {
@@ -1044,7 +1282,7 @@ function deleteSelectedCue() {
   if (!state.selectedCueId) return;
   state.cues = state.cues.filter(c => c.id !== state.selectedCueId);
   state.selectedCueId = null;
-  createCueAtPlayhead();
+  setInspectorVisible(false);
   renderCueMarkers();
   renderStageLightingAtCurrentTime();
 }
@@ -1359,7 +1597,7 @@ function initKeyboardShortcuts() {
       stepTimeline(e.shiftKey ? 4 : 1);
     } else if (e.code === 'KeyM') {
       e.preventDefault();
-      createCueAtPlayhead();
+      addCueAtPlayhead();
     } else if (e.code === 'Delete' || e.code === 'Backspace') {
       if (state.selectedCueId) {
         deleteSelectedCue();
