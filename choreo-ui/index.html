@@ -276,9 +276,9 @@
             <!-- Timing & Duration -->
             <div class="form-row">
               <div class="form-group flex-1">
-                <label>Start Timestamp</label>
+                <label>Start Time</label>
                 <div class="input-with-action">
-                  <input type="number" id="cueTimeInput" min="0" step="50" value="0">
+                  <input type="number" id="cueTimeInput" min="0" step="25" value="0">
                   <span class="input-unit">ms</span>
                   <button class="btn btn-ghost btn-xs" id="btnSnapPlayhead" title="Set to current playhead">Snap</button>
                 </div>
@@ -287,16 +287,29 @@
               <div class="form-group flex-1">
                 <label>Duration</label>
                 <div class="input-with-action">
-                  <input type="number" id="cueDurationInput" min="100" step="100" value="1000">
+                  <input type="number" id="cueDurationInput" min="25" step="25" value="1000">
                   <span class="input-unit">ms</span>
                 </div>
-                <div class="quick-chips">
-                  <button class="chip" data-dur="250">250ms</button>
-                  <button class="chip" data-dur="500">500ms</button>
-                  <button class="chip active" data-dur="1000">1s</button>
-                  <button class="chip" data-dur="2000">2s</button>
-                  <button class="chip" data-dur="5000">5s</button>
+              </div>
+
+              <div class="form-group flex-1">
+                <label>End Time</label>
+                <div class="input-with-action">
+                  <input type="number" id="cueEndTimeInput" min="25" step="25" value="1000">
+                  <span class="input-unit">ms</span>
                 </div>
+              </div>
+            </div>
+
+            <div class="quick-chips-row" style="margin-top: -6px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;">Length:</span>
+              <div class="quick-chips" style="display: flex; gap: 4px; flex-wrap: wrap;">
+                <button class="chip" data-dur="100">100ms</button>
+                <button class="chip" data-dur="250">250ms</button>
+                <button class="chip" data-dur="500">500ms</button>
+                <button class="chip active" data-dur="1000">1s</button>
+                <button class="chip" data-dur="2000">2s</button>
+                <button class="chip" data-dur="3000">3s</button>
               </div>
             </div>
 

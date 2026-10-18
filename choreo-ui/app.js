@@ -602,7 +602,7 @@ function renderCueMarkers() {
 
   visibleCues.forEach(cue => {
     const leftPx = (cue.timeMs / 1000) * state.pxPerSec;
-    const widthPx = Math.max(20, (cue.durationMs / 1000) * state.pxPerSec);
+    const widthPx = Math.max(28, (cue.durationMs / 1000) * state.pxPerSec);
     const topPx = (cue.layer || 0) * (CUE_HEIGHT + CUE_GAP);
 
     const block = document.createElement('div');
@@ -628,12 +628,15 @@ function renderCueMarkers() {
       secLabel = `${cue.sections.length} Secs`;
     }
 
+    const timeLabel = widthPx > 70 ? `<span class="cue-time-badge" style="color:${textColor}; border:1px solid ${textColor}40;">${cue.timeMs}-${cue.timeMs + cue.durationMs}ms</span>` : '';
+
     block.innerHTML = `
       <span style="font-weight:700;">${secLabel}</span>
+      ${timeLabel}
       <span class="cue-badge" style="color:${textColor}; border:1px solid ${textColor}40;">${dancerLabel}</span>
     `;
 
-    block.title = `${cue.timeMs}ms (${cue.durationMs}ms) &bull; Layer ${cue.layer + 1} &bull; ${dancerLabel} &bull; ${secLabel} &bull; ${cue.color}`;
+    block.title = `${secLabel} (${dancerLabel}) • Start: ${cue.timeMs}ms | End: ${cue.timeMs + cue.durationMs}ms (Length: ${cue.durationMs}ms) • Click to edit, drag box to move, drag edges to resize`;
 
     // Resize handles (drag left/right edges to shrink or expand)
     const hLeft = document.createElement('div');
@@ -646,6 +649,9 @@ function renderCueMarkers() {
     attachResizeHandle(hLeft, cue, 'left', block);
     attachResizeHandle(hRight, cue, 'right', block);
 
+    // Drag-to-move cue box horizontally across timeline
+    attachDragToMove(block, cue);
+
     // Click marker to inspect & edit
     block.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -657,6 +663,67 @@ function renderCueMarkers() {
 
   const layerInfo = totalLayers > 1 ? ` (${totalLayers} Layers)` : '';
   document.getElementById('cueCounterBadge').textContent = `${state.cues.length} Cues${layerInfo}`;
+}
+
+// Attach interactive drag-to-move horizontally along the timeline
+function attachDragToMove(block, cue) {
+  block.addEventListener('pointerdown', (e) => {
+    // If clicking on a resize handle, let resize handle operate
+    if (e.target.classList.contains('resize-handle')) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    const startClientX = e.clientX;
+    const initialTimeMs = cue.timeMs;
+    const durationMs = cue.durationMs;
+    const pxPerSec = state.pxPerSec;
+    const thresholdMs = Math.max(10, (8 / pxPerSec) * 1000);
+
+    let hasMoved = false;
+    document.body.classList.add('resizing');
+    block.style.cursor = 'grabbing';
+
+    const onMove = (ev) => {
+      const dxPx = ev.clientX - startClientX;
+      if (Math.abs(dxPx) > 3) hasMoved = true;
+
+      const dxMs = (dxPx / pxPerSec) * 1000;
+      let newTime = initialTimeMs + dxMs;
+
+      if (state.magnetEnabled) {
+        newTime = snapValue(newTime, cue, thresholdMs);
+      } else {
+        const stepMs = currentGridStepMs();
+        newTime = Math.round(newTime / stepMs) * stepMs;
+      }
+
+      newTime = Math.max(0, Math.min(state.totalDurationMs - durationMs, newTime));
+      cue.timeMs = Math.round(newTime);
+
+      updateCueBlockVisual(cue, block);
+      if (state.selectedCueId === cue.id) {
+        updateCueInspectorFields(cue);
+      }
+      renderStageLightingAtCurrentTime();
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('resizing');
+      block.style.cursor = '';
+
+      if (hasMoved) {
+        state.cues.sort((a, b) => a.timeMs - b.timeMs);
+        renderCueMarkers();
+        selectCue(cue.id);
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
 }
 
 // ================= CUE BLOCK RESIZE (DRAG EDGES) =================
@@ -698,12 +765,17 @@ function snapValue(valueMs, excludeCue, thresholdMs) {
 
 function updateCueBlockVisual(cue, block) {
   block.style.left = `${(cue.timeMs / 1000) * state.pxPerSec}px`;
-  block.style.width = `${Math.max(20, (cue.durationMs / 1000) * state.pxPerSec)}px`;
+  block.style.width = `${Math.max(28, (cue.durationMs / 1000) * state.pxPerSec)}px`;
 }
 
 function updateCueInspectorFields(cue) {
-  document.getElementById('cueTimeInput').value = cue.timeMs;
-  document.getElementById('cueDurationInput').value = cue.durationMs;
+  const timeInput = document.getElementById('cueTimeInput');
+  const durInput = document.getElementById('cueDurationInput');
+  const endInput = document.getElementById('cueEndTimeInput');
+
+  if (timeInput) timeInput.value = cue.timeMs;
+  if (durInput) durInput.value = cue.durationMs;
+  if (endInput) endInput.value = cue.timeMs + cue.durationMs;
 }
 
 function attachResizeHandle(handle, cue, side, block) {
@@ -715,7 +787,7 @@ function attachResizeHandle(handle, cue, side, block) {
     const startTimeMs = cue.timeMs;
     const startDurMs = cue.durationMs;
     const pxPerSec = state.pxPerSec;
-    const MIN_MS = 10;
+    const MIN_MS = 25;
 
     document.body.classList.add('resizing');
 
@@ -756,6 +828,7 @@ function attachResizeHandle(handle, cue, side, block) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.classList.remove('resizing');
+      state.cues.sort((a, b) => a.timeMs - b.timeMs);
       renderCueMarkers();
       if (state.selectedCueId === cue.id) selectCue(cue.id);
     };
@@ -900,6 +973,33 @@ function indexCueTargets(cue) {
   cue._sectionsIdx = cue.sections.map(sec => SECTION_INDEX[sec]).filter(i => i !== undefined);
 }
 
+// Applies a cue's lighting mutation to the dancers' current states.
+// Blackout / OFF cues (r=g=b=0 or #000000) reset the state to null (unlit).
+function applyCue(cue, dancerStates) {
+  if (!cue._sectionsIdx) indexCueTargets(cue);
+  const isOff = (cue.r === 0 && cue.g === 0 && cue.b === 0) || cue.color === '#000000';
+  const color = isOff ? null : cue.color;
+  const secIdx = cue._sectionsIdx;
+
+  if (cue._targetsAll) {
+    for (let d = 1; d <= 5; d++) {
+      const ds = dancerStates[d];
+      for (let s = 0; s < secIdx.length; s++) {
+        ds[secIdx[s]] = color;
+      }
+    }
+  } else {
+    const targets = cue.dancers;
+    for (let k = 0; k < targets.length; k++) {
+      const ds = dancerStates[targets[k]];
+      if (!ds) continue;
+      for (let s = 0; s < secIdx.length; s++) {
+        ds[secIdx[s]] = color;
+      }
+    }
+  }
+}
+
 function renderStageLightingAtCurrentTime() {
   const t = state.currentTimeMs;
 
@@ -913,27 +1013,12 @@ function renderStageLightingAtCurrentTime() {
     new Array(SECTION_KEYS.length).fill(null)
   ];
 
-  // Iterate cues that overlap current time
+  // Iterate cues that apply at current time
   const n = state.cues.length;
   for (let ci = 0; ci < n; ci++) {
     const cue = state.cues[ci];
     if (cue.timeMs <= t && t < cue.timeMs + cue.durationMs) {
-      const color = cue.color;
-      const secIdx = cue._sectionsIdx;
-
-      if (cue._targetsAll) {
-        for (let d = 1; d <= 5; d++) {
-          const ds = dancerStates[d];
-          for (let s = 0; s < secIdx.length; s++) ds[secIdx[s]] = color;
-        }
-      } else {
-        const targets = cue.dancers;
-        for (let k = 0; k < targets.length; k++) {
-          const ds = dancerStates[targets[k]];
-          if (!ds) continue;
-          for (let s = 0; s < secIdx.length; s++) ds[secIdx[s]] = color;
-        }
-      }
+      applyCue(cue, dancerStates);
     }
   }
 
@@ -1016,9 +1101,50 @@ document.querySelectorAll('#dancerToggles .toggle-btn').forEach(btn => {
 
 // ================= CUE INSPECTOR & BUILDER =================
 function initInspector() {
+  const timeInput = document.getElementById('cueTimeInput');
+  const durInput = document.getElementById('cueDurationInput');
+  const endInput = document.getElementById('cueEndTimeInput');
+
+  function liveSyncCueInputs(changedField) {
+    let t = parseInt(timeInput.value) || 0;
+    let d = parseInt(durInput.value) || 250;
+    let end = endInput ? (parseInt(endInput.value) || (t + d)) : (t + d);
+
+    if (changedField === 'time') {
+      end = t + d;
+      if (endInput) endInput.value = end;
+    } else if (changedField === 'duration') {
+      d = Math.max(25, d);
+      durInput.value = d;
+      end = t + d;
+      if (endInput) endInput.value = end;
+    } else if (changedField === 'end') {
+      end = Math.max(t + 25, end);
+      d = end - t;
+      durInput.value = d;
+    }
+
+    if (state.selectedCueId) {
+      const cue = state.cues.find(c => c.id === state.selectedCueId);
+      if (cue) {
+        cue.timeMs = t;
+        cue.durationMs = d;
+        renderCueMarkers();
+        renderStageLightingAtCurrentTime();
+      }
+    }
+  }
+
+  timeInput.addEventListener('input', () => liveSyncCueInputs('time'));
+  durInput.addEventListener('input', () => liveSyncCueInputs('duration'));
+  if (endInput) {
+    endInput.addEventListener('input', () => liveSyncCueInputs('end'));
+  }
+
   // Snap to playhead
   document.getElementById('btnSnapPlayhead').addEventListener('click', () => {
-    document.getElementById('cueTimeInput').value = state.currentTimeMs;
+    timeInput.value = state.currentTimeMs;
+    liveSyncCueInputs('time');
   });
 
   // Duration Chips
@@ -1026,7 +1152,9 @@ function initInspector() {
     chip.addEventListener('click', () => {
       document.querySelectorAll('.quick-chips .chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      document.getElementById('cueDurationInput').value = chip.dataset.dur;
+      const dur = parseInt(chip.dataset.dur) || 1000;
+      durInput.value = dur;
+      liveSyncCueInputs('duration');
     });
   });
 
@@ -1230,6 +1358,7 @@ function saveCurrentCue() {
         ...state.cues[idx],
         timeMs,
         durationMs,
+        importedFromCpp: durationMs === 0 ? state.cues[idx].importedFromCpp : false,
         dancers,
         sections,
         color,
@@ -1311,6 +1440,22 @@ function initModals() {
     document.getElementById('importModal').style.display = 'none';
   });
 
+  // Backdrop click to close modals
+  document.getElementById('exportModal').addEventListener('click', (e) => {
+    if (e.target.id === 'exportModal') document.getElementById('exportModal').style.display = 'none';
+  });
+  document.getElementById('importModal').addEventListener('click', (e) => {
+    if (e.target.id === 'importModal') document.getElementById('importModal').style.display = 'none';
+  });
+
+  // Escape key closes modals
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      document.getElementById('exportModal').style.display = 'none';
+      document.getElementById('importModal').style.display = 'none';
+    }
+  });
+
   // Modal Tabs Switching
   document.querySelectorAll('.modal-tabs .tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1355,13 +1500,50 @@ function initModals() {
     try {
       const data = JSON.parse(raw);
       if (Array.isArray(data.cues)) {
-        state.cues = data.cues;
-        if (data.totalDurationMs) state.totalDurationMs = data.totalDurationMs;
-        if (data.audioFileName) document.getElementById('trackNameDisplay').textContent = data.audioFileName;
-        renderCueMarkers();
+        state.cues = data.cues.map(c => {
+          const color = c.color || (c.r !== undefined ? rgbToHex(c.r, c.g, c.b) : '#00ffff');
+          const rgb = hexToRgb(color);
+          return {
+            id: c.id || ('cue_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
+            timeMs: parseInt(c.timeMs, 10) || 0,
+            durationMs: parseInt(c.durationMs, 10) || 1000,
+            dancers: Array.isArray(c.dancers) ? c.dancers : (c.dancer !== undefined ? [c.dancer] : [0]),
+            sections: Array.isArray(c.sections) ? c.sections : Object.keys(SECTIONS),
+            color: color,
+            r: rgb.r,
+            g: rgb.g,
+            b: rgb.b,
+            preferredMacro: c.preferredMacro || undefined
+          };
+        });
+
+        if (data.totalDurationMs) {
+          state.totalDurationMs = data.totalDurationMs;
+        } else {
+          const maxCueTime = state.cues.reduce((max, c) => Math.max(max, c.timeMs + c.durationMs), 0);
+          if (maxCueTime > state.totalDurationMs) {
+            state.totalDurationMs = Math.ceil((maxCueTime + 3000) / 1000) * 1000;
+          }
+        }
+
+        if (data.audioFileName) {
+          state.audioFileName = data.audioFileName;
+          document.getElementById('trackNameDisplay').textContent = data.audioFileName;
+        }
+
+        document.getElementById('trackDurationDisplay').textContent = formatTime(state.totalDurationMs);
+
+        state.cues.sort((a, b) => a.timeMs - b.timeMs);
+        state.selectedCueId = null;
+        setInspectorVisible(false);
+
+        updateTimelineWidth();
         renderRuler();
         renderWaveform();
+        renderCueMarkers();
         renderStageLightingAtCurrentTime();
+        seekToTime(0);
+
         document.getElementById('importModal').style.display = 'none';
         alert(`Successfully imported ${state.cues.length} cues!`);
       } else {
@@ -1418,25 +1600,36 @@ function generateArduinoCppCode() {
     const isFullSuit = (cue.sections.length === 8);
     const isTopOnly = (cue.sections.length === 5 && !cue.sections.includes('belt') && !cue.sections.includes('left-leg') && !cue.sections.includes('right-leg'));
     const isBottomOnly = (cue.sections.length === 3 && cue.sections.includes('belt') && cue.sections.includes('left-leg') && cue.sections.includes('right-leg'));
+    const isBothLegs = (cue.preferredMacro === 'CUE_BOTH_LEGS' || (cue.sections.length === 2 && cue.sections.includes('left-leg') && cue.sections.includes('right-leg') && cue.preferredMacro !== 'individual'));
+    const isBlackoutCue = (cue.r === 0 && cue.g === 0 && cue.b === 0) || cue.color === '#000000';
 
     dancers.forEach(dancer => {
       const dancerMacro = dancer === 0 ? 'SLAVE_ALL' : `SLAVE_${dancer}`;
 
-      // 1. Turn-ON packets
+      // 1. Emit packet at cue.timeMs
       if (isFullSuit) {
         packets.push({
           timeMs: cue.timeMs,
-          line: `    CUE_FULL_SUIT(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Full Suit`
+          isOff: isBlackoutCue,
+          line: `    CUE_FULL_SUIT(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Full Suit${isBlackoutCue ? ' OFF' : ''}`,
         });
       } else if (isTopOnly) {
         packets.push({
           timeMs: cue.timeMs,
-          line: `    CUE_UPPER_BODY(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Top Body`
+          isOff: isBlackoutCue,
+          line: `    CUE_UPPER_BODY(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Top Body${isBlackoutCue ? ' OFF' : ''}`,
         });
       } else if (isBottomOnly) {
         packets.push({
           timeMs: cue.timeMs,
-          line: `    CUE_LOWER_BODY(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Bottom Body`
+          isOff: isBlackoutCue,
+          line: `    CUE_LOWER_BODY(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Bottom Body${isBlackoutCue ? ' OFF' : ''}`,
+        });
+      } else if (isBothLegs) {
+        packets.push({
+          timeMs: cue.timeMs,
+          isOff: isBlackoutCue,
+          line: `    CUE_BOTH_LEGS(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: Both Legs${isBlackoutCue ? ' OFF' : ''}`,
         });
       } else {
         cue.sections.forEach(secKey => {
@@ -1444,45 +1637,62 @@ function generateArduinoCppCode() {
           if (sec) {
             packets.push({
               timeMs: cue.timeMs,
-              line: `    ${sec.macro}(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: ${sec.name}`
+              isOff: isBlackoutCue,
+              line: `    ${sec.macro}(${cue.timeMs}, ${dancerMacro}, ${cue.r}, ${cue.g}, ${cue.b}), // Cue #${cueIdx+1}: ${sec.name}${isBlackoutCue ? ' OFF' : ''}`,
             });
           }
         });
       }
 
       // 2. Turn-OFF packets (blackout when duration expires)
-      const offTime = cue.timeMs + cue.durationMs;
-      if (isFullSuit) {
-        packets.push({
-          timeMs: offTime,
-          line: `    CUE_FULL_SUIT(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} OFF`
-        });
-      } else if (isTopOnly) {
-        packets.push({
-          timeMs: offTime,
-          line: `    CUE_UPPER_BODY(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} Top OFF`
-        });
-      } else if (isBottomOnly) {
-        packets.push({
-          timeMs: offTime,
-          line: `    CUE_LOWER_BODY(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} Bottom OFF`
-        });
-      } else {
-        cue.sections.forEach(secKey => {
-          const sec = SECTIONS[secKey];
-          if (sec) {
-            packets.push({
-              timeMs: offTime,
-              line: `    ${sec.macro}(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} ${sec.name} OFF`
-            });
-          }
-        });
+      if (cue.durationMs > 0 && !isBlackoutCue) {
+        const offTime = cue.timeMs + cue.durationMs;
+        if (isFullSuit) {
+          packets.push({
+            timeMs: offTime,
+            isOff: true,
+            line: `    CUE_FULL_SUIT(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} OFF`,
+          });
+        } else if (isTopOnly) {
+          packets.push({
+            timeMs: offTime,
+            isOff: true,
+            line: `    CUE_UPPER_BODY(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} Top OFF`,
+          });
+        } else if (isBottomOnly) {
+          packets.push({
+            timeMs: offTime,
+            isOff: true,
+            line: `    CUE_LOWER_BODY(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} Bottom OFF`,
+          });
+        } else if (isBothLegs) {
+          packets.push({
+            timeMs: offTime,
+            isOff: true,
+            line: `    CUE_BOTH_LEGS(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} Both Legs OFF`,
+          });
+        } else {
+          cue.sections.forEach(secKey => {
+            const sec = SECTIONS[secKey];
+            if (sec) {
+              packets.push({
+                timeMs: offTime,
+                isOff: true,
+                line: `    ${sec.macro}(${offTime}, ${dancerMacro}, 0, 0, 0), // Cue #${cueIdx+1} ${sec.name} OFF`,
+              });
+            }
+          });
+        }
       }
     });
   });
 
-  // Sort chronologically by timeMs
-  packets.sort((a, b) => a.timeMs - b.timeMs);
+  // Sort chronologically by timeMs, placing OFF packets before ON packets if timestamps are identical
+  packets.sort((a, b) => {
+    if (a.timeMs !== b.timeMs) return a.timeMs - b.timeMs;
+    if (a.isOff !== b.isOff) return a.isOff ? -1 : 1;
+    return 0;
+  });
 
   let out = `// ================= CHOREOGRAPHY TIMELINE GENERATED BY LIGHT DANCE STUDIO =================\n`;
   out += `// Total Steps: ${packets.length} | Generated on: ${new Date().toLocaleString()}\n`;
@@ -1495,71 +1705,390 @@ function generateArduinoCppCode() {
   return out;
 }
 
+// Helpers for Parsing C++ Choreography Code
+function resolveDancerFromStr(str) {
+  const s = String(str).trim().toUpperCase();
+  if (s === '0' || s === 'SLAVE_ALL' || s === 'ALL' || s === 'SLAVE_0') return 0;
+  const m = s.match(/[1-5]/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
+function resolveSectionsFromMacro(macroName) {
+  const m = macroName.toUpperCase();
+  if (m === 'CUE_FULL_SUIT' || m === 'CUE_ALL') {
+    return { sections: Object.keys(SECTIONS), preferredMacro: 'CUE_FULL_SUIT' };
+  }
+  if (m === 'CUE_UPPER_BODY' || m === 'CUE_TOP_BODY' || m === 'CUE_UPPER') {
+    return { sections: ['head', 'left-hand', 'right-hand', 'left-zipper', 'right-zipper'], preferredMacro: 'CUE_UPPER_BODY' };
+  }
+  if (m === 'CUE_LOWER_BODY' || m === 'CUE_BOTTOM_BODY' || m === 'CUE_LOWER') {
+    return { sections: ['belt', 'left-leg', 'right-leg'], preferredMacro: 'CUE_LOWER_BODY' };
+  }
+  if (m === 'CUE_BOTH_LEGS') {
+    return { sections: ['left-leg', 'right-leg'], preferredMacro: 'CUE_BOTH_LEGS' };
+  }
+  if (m === 'CUE_HEAD' || m === 'CUE_HOOD') {
+    return { sections: ['head'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_LEFT_HAND' || m === 'CUE_LEFT_ARM') {
+    return { sections: ['left-hand'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_RIGHT_HAND' || m === 'CUE_RIGHT_ARM') {
+    return { sections: ['right-hand'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_BOTH_HANDS' || m === 'CUE_BOTH_ARMS') {
+    return { sections: ['left-hand', 'right-hand'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_LEFT_ZIPPER') {
+    return { sections: ['left-zipper'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_RIGHT_ZIPPER') {
+    return { sections: ['right-zipper'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_BOTH_ZIPPERS') {
+    return { sections: ['left-zipper', 'right-zipper'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_LEFT_LEG') {
+    return { sections: ['left-leg'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_RIGHT_LEG') {
+    return { sections: ['right-leg'], preferredMacro: undefined };
+  }
+  if (m === 'CUE_BELT') {
+    return { sections: ['belt'], preferredMacro: undefined };
+  }
+
+  // Check matching section in SECTIONS
+  for (const [key, val] of Object.entries(SECTIONS)) {
+    if (val.macro === m) {
+      return { sections: [key], preferredMacro: undefined };
+    }
+  }
+
+  return { sections: Object.keys(SECTIONS), preferredMacro: undefined };
+}
+
+function resolveSectionsFromStruct(stripStr, startLedStr, endLedStr) {
+  const stripUp = String(stripStr).trim().toUpperCase();
+  const stripId = (stripUp.includes('BOTH') || stripUp === '2') ? 2 : ((stripUp.includes('LOWER') || stripUp === '1') ? 1 : 0);
+
+  if (stripId === 2) {
+    return { sections: Object.keys(SECTIONS), preferredMacro: 'CUE_FULL_SUIT' };
+  }
+
+  const startDigits = String(startLedStr).replace(/\D/g, '');
+  const endDigits = String(endLedStr).replace(/\D/g, '');
+  const startNum = startDigits !== '' ? parseInt(startDigits, 10) : 0;
+  const endNum = endDigits !== '' ? parseInt(endDigits, 10) : 299;
+
+  if (stripId === 0) {
+    // Upper strip (0-299)
+    if (startNum <= 0 && endNum >= 290) {
+      return { sections: ['head', 'left-hand', 'right-hand', 'left-zipper', 'right-zipper'], preferredMacro: 'CUE_UPPER_BODY' };
+    }
+    if (startNum === 0 && endNum <= 35) return { sections: ['left-zipper'], preferredMacro: undefined };
+    if (startNum >= 30 && endNum <= 105) return { sections: ['left-hand'], preferredMacro: undefined };
+    if (startNum >= 100 && endNum <= 155) return { sections: ['head'], preferredMacro: undefined };
+    if (startNum >= 150 && endNum <= 225) return { sections: ['right-hand'], preferredMacro: undefined };
+    if (startNum >= 225 && endNum >= 290) return { sections: ['right-zipper'], preferredMacro: undefined };
+    return { sections: ['head', 'left-hand', 'right-hand', 'left-zipper', 'right-zipper'], preferredMacro: 'CUE_UPPER_BODY' };
+  } else {
+    // Lower strip (0-299)
+    if (startNum <= 0 && endNum >= 290) {
+      return { sections: ['belt', 'left-leg', 'right-leg'], preferredMacro: 'CUE_LOWER_BODY' };
+    }
+    if (startNum === 0 && endNum <= 115) return { sections: ['left-leg'], preferredMacro: undefined };
+    if (startNum >= 110 && endNum <= 224) return { sections: ['right-leg'], preferredMacro: undefined };
+    if (startNum <= 5 && endNum >= 220 && endNum <= 230) {
+      return { sections: ['left-leg', 'right-leg'], preferredMacro: 'CUE_BOTH_LEGS' };
+    }
+    if (startNum >= 220 && endNum >= 290) return { sections: ['belt'], preferredMacro: undefined };
+    return { sections: ['belt', 'left-leg', 'right-leg'], preferredMacro: 'CUE_LOWER_BODY' };
+  }
+}
+
 function parseAndImportCppCode() {
   const code = document.getElementById('cppInputBox').value;
   if (!code.trim()) return;
 
-  const importedCues = [];
-  // Regex to match macros like CUE_HEAD(timeMs, dancer, r, g, b)
-  const macroRegex = /(CUE_[A-Z_]+)\s*\(\s*(\d+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
-  let match;
+  const lines = code.split('\n');
+  const rawPackets = [];
 
-  while ((match = macroRegex.exec(code)) !== null) {
-    const macro = match[1];
-    const timeMs = parseInt(match[2]);
-    const dancerStr = match[3];
-    const r = parseInt(match[4]);
-    const g = parseInt(match[5]);
-    const b = parseInt(match[6]);
+  const macroRegex = /(CUE_[A-Z0-9_]+)\s*\(\s*(\d+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i;
+  const structRegex = /\{\s*(\d+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}/i;
 
-    // Skip blackout cues if they are turn-offs (they will be modeled as duration)
-    if (r === 0 && g === 0 && b === 0) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const stripped = rawLine.trim();
+    if (!stripped || stripped.startsWith('#')) continue;
 
-    let dancer = 0;
-    if (dancerStr.includes('1')) dancer = 1;
-    else if (dancerStr.includes('2')) dancer = 2;
-    else if (dancerStr.includes('3')) dancer = 3;
-    else if (dancerStr.includes('4')) dancer = 4;
-    else if (dancerStr.includes('5')) dancer = 5;
-
-    let sections = [];
-    if (macro === 'CUE_FULL_SUIT') sections = Object.keys(SECTIONS);
-    else if (macro === 'CUE_UPPER_BODY') sections = ['head', 'left-hand', 'right-hand', 'left-zipper', 'right-zipper'];
-    else if (macro === 'CUE_LOWER_BODY') sections = ['belt', 'left-leg', 'right-leg'];
-    else {
-      // Find matching section macro
-      for (let [key, val] of Object.entries(SECTIONS)) {
-        if (val.macro === macro) {
-          sections.push(key);
-          break;
-        }
-      }
+    let comment = '';
+    const commentIdx = rawLine.indexOf('//');
+    if (commentIdx !== -1) {
+      comment = rawLine.substring(commentIdx + 2).trim();
     }
 
-    if (sections.length === 0) sections = Object.keys(SECTIONS);
+    const cueMatch = comment.match(/Cue\s*#?\s*(\d+)/i);
+    const cueNum = cueMatch ? parseInt(cueMatch[1], 10) : null;
+    const isOffComment = /\b(OFF|off|blackout)\b/i.test(comment);
 
-    const hex = rgbToHex(r, g, b);
+    const m = stripped.match(macroRegex);
+    if (m) {
+      const macroName = m[1].toUpperCase();
+      const timeMs = parseInt(m[2], 10);
+      const dancer = resolveDancerFromStr(m[3]);
+      const r = parseInt(m[4], 10);
+      const g = parseInt(m[5], 10);
+      const b = parseInt(m[6], 10);
+      const { sections, preferredMacro } = resolveSectionsFromMacro(macroName);
+      const isOff = (r === 0 && g === 0 && b === 0);
 
-    importedCues.push({
-      id: 'cue_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      timeMs,
-      durationMs: 1500, // Default duration if not specified
-      dancers: [dancer],
-      sections,
-      color: hex,
-      r, g, b
+      rawPackets.push({
+        timeMs,
+        dancer,
+        sections,
+        r, g, b,
+        isOff,
+        cueNum,
+        isOffComment,
+        preferredMacro,
+        macroName
+      });
+      continue;
+    }
+
+    const s = stripped.match(structRegex);
+    if (s) {
+      const timeMs = parseInt(s[1], 10);
+      const dancer = resolveDancerFromStr(s[2]);
+      const stripStr = s[3];
+      const startLedStr = s[4];
+      const endLedStr = s[5];
+      const r = parseInt(s[6], 10);
+      const g = parseInt(s[7], 10);
+      const b = parseInt(s[8], 10);
+      const { sections, preferredMacro } = resolveSectionsFromStruct(stripStr, startLedStr, endLedStr);
+      const isOff = (r === 0 && g === 0 && b === 0);
+
+      rawPackets.push({
+        timeMs,
+        dancer,
+        sections,
+        r, g, b,
+        isOff,
+        cueNum,
+        isOffComment,
+        preferredMacro,
+        macroName: null
+      });
+    }
+  }
+
+  if (rawPackets.length === 0) {
+    alert('Could not find valid choreography packets or CUE_... macros in the provided C++ code.');
+    return;
+  }
+
+  // Group / pair packets to calculate the true active duration for full-length boxes
+  const hasCueNums = rawPackets.some(p => p.cueNum !== null && !p.isOff);
+  let importedCues = [];
+
+  if (hasCueNums) {
+    const grouped = new Map();
+    rawPackets.forEach(p => {
+      const key = p.cueNum !== null ? `cue_${p.cueNum}` : `time_${p.timeMs}_${p.dancer}_${p.r}_${p.g}_${p.b}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, { on: [], off: [] });
+      }
+      if (p.isOff) {
+        grouped.get(key).off.push(p);
+      } else {
+        grouped.get(key).on.push(p);
+      }
     });
+
+    grouped.forEach(grp => {
+      const onList = grp.on;
+      if (onList.length === 0) return;
+      const offList = grp.off;
+
+      const startMs = Math.min(...onList.map(p => p.timeMs));
+      const firstOn = onList[0];
+      const dancerSet = new Set(onList.map(p => p.dancer));
+      const dancers = dancerSet.has(0) ? [0] : Array.from(dancerSet).sort((a, b) => a - b);
+      const sectionSet = new Set();
+      onList.forEach(p => p.sections.forEach(s => sectionSet.add(s)));
+      const sections = Array.from(sectionSet);
+
+      let durationMs = 1000;
+      if (offList.length > 0) {
+        const offMs = Math.max(...offList.map(p => p.timeMs));
+        durationMs = Math.max(50, offMs - startMs);
+      }
+
+      importedCues.push({
+        id: 'cue_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+        timeMs: startMs,
+        durationMs,
+        dancers,
+        sections,
+        color: rgbToHex(firstOn.r, firstOn.g, firstOn.b),
+        r: firstOn.r,
+        g: firstOn.g,
+        b: firstOn.b,
+        preferredMacro: firstOn.preferredMacro
+      });
+    });
+  } else {
+    // Unlabelled C++ code: pair ON packets with OFF packets or next state mutations chronologically
+    rawPackets.sort((a, b) => {
+      if (a.timeMs !== b.timeMs) return a.timeMs - b.timeMs;
+      if (a.isOff !== b.isOff) return a.isOff ? -1 : 1;
+      return 0;
+    });
+
+    const activeOns = new Map(); // key `${dancer}_${section}` -> onPacket
+    const onCues = [];
+
+    rawPackets.forEach(p => {
+      const dancerList = p.dancer === 0 ? [1, 2, 3, 4, 5] : [p.dancer];
+
+      if (!p.isOff) {
+        // ON packet
+        dancerList.forEach(d => {
+          p.sections.forEach(s => {
+            const key = `${d}_${s}`;
+            if (activeOns.has(key)) {
+              const prev = activeOns.get(key);
+              if (!prev.endMs) prev.endMs = p.timeMs;
+              activeOns.delete(key);
+            }
+          });
+        });
+
+        p.endMs = null;
+        onCues.push(p);
+
+        dancerList.forEach(d => {
+          p.sections.forEach(s => {
+            activeOns.set(`${d}_${s}`, p);
+          });
+        });
+      } else {
+        // OFF packet
+        dancerList.forEach(d => {
+          p.sections.forEach(s => {
+            const key = `${d}_${s}`;
+            if (activeOns.has(key)) {
+              const prev = activeOns.get(key);
+              if (!prev.endMs) prev.endMs = p.timeMs;
+              activeOns.delete(key);
+            }
+          });
+        });
+      }
+    });
+
+    // Close any unclosed cues
+    onCues.forEach((cue, idx) => {
+      if (!cue.endMs) {
+        let nextTime = null;
+        for (let j = idx + 1; j < onCues.length; j++) {
+          if (onCues[j].timeMs > cue.timeMs) {
+            nextTime = onCues[j].timeMs;
+            break;
+          }
+        }
+        cue.endMs = nextTime !== null ? nextTime : cue.timeMs + 1000;
+      }
+      cue.durationMs = Math.max(50, cue.endMs - cue.timeMs);
+    });
+
+    // Merge concurrent identical onCues (e.g. CUE_LEFT_LEG and CUE_RIGHT_LEG at same timeMs and duration)
+    const merged = [];
+    onCues.forEach(onP => {
+      let found = false;
+      for (let i = 0; i < merged.length; i++) {
+        const m = merged[i];
+        if (m.timeMs === onP.timeMs && m.durationMs === onP.durationMs && m.r === onP.r && m.g === onP.g && m.b === onP.b) {
+          if (m.dancers.length === 1 && m.dancers[0] === onP.dancer) {
+            onP.sections.forEach(s => {
+              if (!m.sections.includes(s)) m.sections.push(s);
+            });
+            if (m.sections.includes('left-leg') && m.sections.includes('right-leg')) {
+              if (m.sections.includes('belt')) {
+                m.preferredMacro = 'CUE_LOWER_BODY';
+              } else if (m.sections.length === 2) {
+                m.preferredMacro = 'CUE_BOTH_LEGS';
+              }
+            }
+            found = true;
+            break;
+          }
+          const sameSecs = (m.sections.length === onP.sections.length && m.sections.every(s => onP.sections.includes(s)));
+          if (sameSecs) {
+            if (!m.dancers.includes(onP.dancer)) m.dancers.push(onP.dancer);
+            if (m.dancers.includes(0)) m.dancers = [0];
+            found = true;
+            break;
+          }
+        }
+      }
+
+      if (!found) {
+        merged.push({
+          timeMs: onP.timeMs,
+          durationMs: onP.durationMs,
+          dancers: [onP.dancer],
+          sections: [...onP.sections],
+          color: rgbToHex(onP.r, onP.g, onP.b),
+          r: onP.r,
+          g: onP.g,
+          b: onP.b,
+          preferredMacro: onP.preferredMacro
+        });
+      }
+    });
+
+    importedCues = merged.map((m, idx) => ({
+      id: 'cue_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6) + '_' + idx,
+      timeMs: m.timeMs,
+      durationMs: m.durationMs,
+      dancers: m.dancers,
+      sections: m.sections,
+      color: m.color,
+      r: m.r,
+      g: m.g,
+      b: m.b,
+      preferredMacro: m.preferredMacro
+    }));
   }
 
   if (importedCues.length > 0) {
+    importedCues.sort((a, b) => a.timeMs - b.timeMs);
     state.cues = importedCues;
-    state.cues.sort((a, b) => a.timeMs - b.timeMs);
+
+    // Check if timeline duration needs expanding
+    const maxCueEnd = state.cues.reduce((max, c) => Math.max(max, c.timeMs + c.durationMs), 0);
+    if (maxCueEnd > state.totalDurationMs) {
+      state.totalDurationMs = Math.ceil((maxCueEnd + 3000) / 1000) * 1000;
+    }
+    document.getElementById('trackDurationDisplay').textContent = formatTime(state.totalDurationMs);
+
+    state.selectedCueId = null;
+    setInspectorVisible(false);
+
+    updateTimelineWidth();
+    renderRuler();
+    renderWaveform();
     renderCueMarkers();
     renderStageLightingAtCurrentTime();
+    seekToTime(0);
+
     document.getElementById('importModal').style.display = 'none';
-    alert(`Successfully parsed and imported ${importedCues.length} lighting cues from C++!`);
+    alert(`Successfully parsed and imported ${importedCues.length} full-length lighting cues from C++!`);
   } else {
-    alert('Could not find valid CUE_... macros in the provided C++ code.');
+    alert('No valid lighting cues could be extracted from the provided C++ code.');
   }
 }
 
