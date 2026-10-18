@@ -61,7 +61,7 @@ const state = {
 };
 
 // ================= INITIALIZATION =================
-document.addEventListener('DOMContentLoaded', () => {
+function initApp() {
   initSuitVectors();
   initAudio();
   initTimeline();
@@ -71,7 +71,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load default demo routine
   loadDefaultRoutine();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 // ================= SUIT SVG VECTOR RENDERING =================
 // Generates accurate SVG vector paths modeling the hoodie & pants from Image 2
@@ -542,31 +548,138 @@ function renderWaveform() {
   }
 }
 
-// ================= CUE MARKERS TRACK RENDERING (WITH DYNAMIC DOWNWARD LAYER STACKING) =================
-// Calculates non-overlapping vertical layers so that concurrent/overlapping cues stack downwards
+// Constants for timeline cue block rendering and stacking
+const CUE_HEIGHT = 26;
+const CUE_GAP = 5;
+const MIN_CUE_BOX_WIDTH = 64; // Minimum visual width in pixels so body part and dancer badge are readable
+const CUE_SEPARATION_GAP_PX = 4; // Horizontal gap between adjacent cues on the same line
+
+// ================= CUE BODY PART RESOLUTION =================
+// Resolves a human-readable body part label for a cue based on its macro or section list
+function getCueBodyPartLabel(cue) {
+  if (!cue) return 'Full Suit';
+
+  // Check preferredMacro first if present
+  if (cue.preferredMacro) {
+    const macroMap = {
+      'CUE_FULL_SUIT': 'Full Suit',
+      'CUE_ALL': 'Full Suit',
+      'CUE_UPPER_BODY': 'Upper Body',
+      'CUE_TOP_BODY': 'Upper Body',
+      'CUE_LOWER_BODY': 'Lower Body',
+      'CUE_BOTTOM_BODY': 'Lower Body',
+      'CUE_BOTH_LEGS': 'Both Legs',
+      'CUE_BOTH_HANDS': 'Both Hands',
+      'CUE_BOTH_ZIPPERS': 'Both Zippers',
+      'CUE_HEAD': 'Hood / Head',
+      'CUE_HOOD': 'Hood / Head',
+      'CUE_LEFT_HAND': 'Left Hand',
+      'CUE_RIGHT_HAND': 'Right Hand',
+      'CUE_LEFT_LEG': 'Left Leg',
+      'CUE_RIGHT_LEG': 'Right Leg',
+      'CUE_BELT': 'Belt Area',
+      'CUE_LEFT_ZIPPER': 'Left Zipper',
+      'CUE_RIGHT_ZIPPER': 'Right Zipper'
+    };
+    if (macroMap[cue.preferredMacro]) return macroMap[cue.preferredMacro];
+  }
+
+  const secs = cue.sections || [];
+  if (secs.length === 0) return 'Full Suit';
+  if (secs.length === 8 || secs.length === Object.keys(SECTIONS).length) {
+    return 'Full Suit';
+  }
+
+  const upperSecs = ['head', 'left-hand', 'right-hand', 'left-zipper', 'right-zipper'];
+  const lowerSecs = ['belt', 'left-leg', 'right-leg'];
+
+  if (secs.length === upperSecs.length && upperSecs.every(s => secs.includes(s))) {
+    return 'Upper Body';
+  }
+  if (secs.length === lowerSecs.length && lowerSecs.every(s => secs.includes(s))) {
+    return 'Lower Body';
+  }
+  if (secs.length === 2 && secs.includes('left-leg') && secs.includes('right-leg')) {
+    return 'Both Legs';
+  }
+  if (secs.length === 2 && secs.includes('left-hand') && secs.includes('right-hand')) {
+    return 'Both Hands';
+  }
+  if (secs.length === 2 && secs.includes('left-zipper') && secs.includes('right-zipper')) {
+    return 'Both Zippers';
+  }
+
+  if (secs.length === 1) {
+    const s = secs[0];
+    const singleMap = {
+      'head': 'Hood / Head',
+      'left-hand': 'Left Hand',
+      'right-hand': 'Right Hand',
+      'left-zipper': 'Left Zipper',
+      'right-zipper': 'Right Zipper',
+      'belt': 'Belt Area',
+      'left-leg': 'Left Leg',
+      'right-leg': 'Right Leg'
+    };
+    return singleMap[s] || (SECTIONS[s] ? SECTIONS[s].name : s);
+  }
+
+  // Mixed 2 or 3 sections: combine friendly short names
+  const shortNames = {
+    'head': 'Head',
+    'left-hand': 'L-Hand',
+    'right-hand': 'R-Hand',
+    'left-zipper': 'L-Zip',
+    'right-zipper': 'R-Zip',
+    'belt': 'Belt',
+    'left-leg': 'L-Leg',
+    'right-leg': 'R-Leg'
+  };
+  return secs.map(s => shortNames[s] || s).join(' + ');
+}
+
+// ================= CUE MARKERS TRACK RENDERING (WITH NON-OVERLAPPING DOWNWARD LAYER STACKING) =================
+// Calculates non-overlapping vertical layers so that:
+// 1. Two or more cues at the exact same instant strictly occupy separate lines.
+// 2. Cues whose visual boxes would overlap horizontally stack downwards onto separate lines.
 function calculateCueLayers(visibleCues) {
-  // Sort cues chronologically by timeMs, then duration
-  const sorted = [...visibleCues].sort((a, b) => a.timeMs - b.timeMs || a.durationMs - b.durationMs);
-  const layerEndTimes = []; // Tracks the end timestamp of the latest cue in each layer
+  // Sort cues chronologically by timeMs, then dancer ID, then duration descending
+  const sorted = [...visibleCues].sort((a, b) => {
+    if (a.timeMs !== b.timeMs) return a.timeMs - b.timeMs;
+    const dancerA = (a.dancers && a.dancers.length > 0) ? a.dancers[0] : 0;
+    const dancerB = (b.dancers && b.dancers.length > 0) ? b.dancers[0] : 0;
+    if (dancerA !== dancerB) return dancerA - dancerB;
+    return (b.durationMs || 0) - (a.durationMs || 0);
+  });
+
+  const pxPerSec = Math.max(1, state.pxPerSec || 80);
+  const layerEndTimes = [];   // Tracks visual right boundary in milliseconds for each line/layer
+  const layerStartTimes = []; // Tracks start timeMs of the last cue on each line/layer
 
   sorted.forEach(cue => {
-    let assignedLayer = -1;
     const start = cue.timeMs;
-    const end = cue.timeMs + cue.durationMs;
+    // Calculate effective visual duration including physical box width and separation margin
+    const visualDurationMs = Math.max(cue.durationMs || 0, Math.ceil(((MIN_CUE_BOX_WIDTH + CUE_SEPARATION_GAP_PX) / pxPerSec) * 1000));
+    const visualEnd = start + visualDurationMs;
 
-    // Check existing layers to find the first one that has finished before this cue starts
+    let assignedLayer = -1;
+
+    // Check existing layers to find the first one that has finished visually
+    // AND does NOT start at the exact same instant
     for (let l = 0; l < layerEndTimes.length; l++) {
-      if (layerEndTimes[l] <= start) {
+      if (layerEndTimes[l] <= start && layerStartTimes[l] !== start) {
         assignedLayer = l;
-        layerEndTimes[l] = end;
+        layerEndTimes[l] = visualEnd;
+        layerStartTimes[l] = start;
         break;
       }
     }
 
-    // If all existing layers overlap, create a new layer downwards
+    // If all existing lines collide or are simultaneous, create a new separate line downwards
     if (assignedLayer === -1) {
       assignedLayer = layerEndTimes.length;
-      layerEndTimes.push(end);
+      layerEndTimes.push(visualEnd);
+      layerStartTimes.push(start);
     }
 
     cue.layer = assignedLayer;
@@ -591,18 +704,16 @@ function renderCueMarkers() {
     return true;
   });
 
-  // Calculate dynamic layers for overlapping cues
+  // Calculate dynamic layers for overlapping and concurrent cues
   const totalLayers = calculateCueLayers(visibleCues);
 
-  const CUE_HEIGHT = 26;
-  const CUE_GAP = 5;
   const trackHeight = Math.max(130, totalLayers * (CUE_HEIGHT + CUE_GAP) + 35);
   track.style.height = `${trackHeight}px`;
   viewport.style.height = `${96 + trackHeight}px`;
 
   visibleCues.forEach(cue => {
     const leftPx = (cue.timeMs / 1000) * state.pxPerSec;
-    const widthPx = Math.max(28, (cue.durationMs / 1000) * state.pxPerSec);
+    const widthPx = Math.max(MIN_CUE_BOX_WIDTH, (cue.durationMs / 1000) * state.pxPerSec);
     const topPx = (cue.layer || 0) * (CUE_HEIGHT + CUE_GAP);
 
     const block = document.createElement('div');
@@ -618,25 +729,16 @@ function renderCueMarkers() {
     const textColor = brightness > 140 ? '#07090e' : '#ffffff';
     block.style.color = textColor;
 
-    // Dancer badge text & section summary
+    // Dancer badge text & body part label (timestamps are omitted from the block per user request)
     const dancerLabel = cue.dancers.includes(0) ? 'ALL' : `D${cue.dancers.join(',')}`;
-    let secLabel = 'SUIT';
-    if (cue.sections.length === 1) {
-      const secKey = cue.sections[0];
-      secLabel = SECTIONS[secKey] ? SECTIONS[secKey].name.split('/')[0].trim() : secKey;
-    } else if (cue.sections.length < 8) {
-      secLabel = `${cue.sections.length} Secs`;
-    }
-
-    const timeLabel = widthPx > 70 ? `<span class="cue-time-badge" style="color:${textColor}; border:1px solid ${textColor}40;">${cue.timeMs}-${cue.timeMs + cue.durationMs}ms</span>` : '';
+    const bodyPartLabel = getCueBodyPartLabel(cue);
 
     block.innerHTML = `
-      <span style="font-weight:700;">${secLabel}</span>
-      ${timeLabel}
+      <span class="cue-body-part" style="color:${textColor};">${bodyPartLabel}</span>
       <span class="cue-badge" style="color:${textColor}; border:1px solid ${textColor}40;">${dancerLabel}</span>
     `;
 
-    block.title = `${secLabel} (${dancerLabel}) • Start: ${cue.timeMs}ms | End: ${cue.timeMs + cue.durationMs}ms (Length: ${cue.durationMs}ms) • Click to edit, drag box to move, drag edges to resize`;
+    block.title = `${bodyPartLabel} (${dancerLabel}) • ${cue.timeMs}ms - ${cue.timeMs + cue.durationMs}ms (Length: ${cue.durationMs}ms) • Click to edit, drag box to move, drag edges to resize`;
 
     // Resize handles (drag left/right edges to shrink or expand)
     const hLeft = document.createElement('div');
@@ -765,7 +867,7 @@ function snapValue(valueMs, excludeCue, thresholdMs) {
 
 function updateCueBlockVisual(cue, block) {
   block.style.left = `${(cue.timeMs / 1000) * state.pxPerSec}px`;
-  block.style.width = `${Math.max(28, (cue.durationMs / 1000) * state.pxPerSec)}px`;
+  block.style.width = `${Math.max(MIN_CUE_BOX_WIDTH, (cue.durationMs / 1000) * state.pxPerSec)}px`;
 }
 
 function updateCueInspectorFields(cue) {
@@ -1265,12 +1367,12 @@ function selectCue(cueId) {
   setInspectorVisible(true);
 
   document.getElementById('inspectorTitle').textContent = 'EDIT LIGHT CUE';
-  document.getElementById('selectedCueBadge').textContent = `Cue ID: ${cueId.slice(-4)}`;
+  const dancerLabel = cue.dancers.includes(0) ? 'ALL' : `D${cue.dancers.join(',')}`;
+  document.getElementById('selectedCueBadge').textContent = `${getCueBodyPartLabel(cue)} (${dancerLabel})`;
   document.getElementById('btnSaveCueText').textContent = 'Update Cue';
   document.getElementById('btnDeleteCue').style.display = 'inline-flex';
 
-  document.getElementById('cueTimeInput').value = cue.timeMs;
-  document.getElementById('cueDurationInput').value = cue.durationMs;
+  updateCueInspectorFields(cue);
   setColor(cue.color);
 
   // Dancers
