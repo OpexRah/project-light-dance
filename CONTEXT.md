@@ -45,7 +45,7 @@
 
 ## 2. Body Section Configuration & LED Mapping
 
-Each dancer's suit is divided into configurable physical zones across the two LED strips:
+Each dancer's suit is divided into configurable physical zones across the two LED strips. The values below are the **defaults (Dancer 1)**; each dancer can have its own start/end for every section (configured on the Master — see the tip below).
 
 ### Top Part (Upper Body Strip - GPIO 14, 300 LEDs)
 | Section Name | Start LED | End LED | Count | Function / Placement |
@@ -64,27 +64,35 @@ Each dancer's suit is divided into configurable physical zones across the two LE
 | **Belt Area** | `225` | `299` | 75 LEDs | Waistband / belt line |
 
 > [!TIP]
-> All section boundaries are configured via `#define` statements in both [`Master_1_slave.ino`](file:///c:/Users/rathi/OneDrive/Laptop/Desktop/Projects/project-light-dance/Master_1_slave/Master_1_slave.ino) and [`Slave_2_strips.ino`](file:///c:/Users/rathi/OneDrive/Laptop/Desktop/Projects/project-light-dance/Slave_2_strips/Slave_2_strips.ino). If you change strip lengths or rewire a section, adjust the `#define` values in the config block.
+> Section boundaries are configured **per dancer on the Master only**, using `const uint16_t` arrays in the `SECTION CONFIGURATION (PER-DANCER)` block of [`Master_1_slave.ino`](file:///c:/Users/rathi/OneDrive/Laptop/Desktop/Projects/project-light-dance/Master_1_slave/Master_1_slave.ino). Each array holds one value per dancer (index `0` = Dancer 1 … index `4` = Dancer 5), so Dancer 1 and Dancer 2 can use different boundaries for the same section. For example:
+> ```cpp
+> const uint16_t SEC_LEFT_HAND_START[NUM_SLAVES] = { 32, 20, 32, 32, 32 };
+> const uint16_t SEC_LEFT_HAND_END  [NUM_SLAVES] = {100, 88,100,100,100 };
+> ```
+> The Slave is unchanged: it simply lights the exact `startLed..endLed` range it receives. Section cues to `SLAVE_ALL` are auto-split on the Master into one unicast packet per dancer, each carrying that dancer's own boundaries.
 
 ---
 
 ## 3. Network Protocol & Packet Structure
 
-Communication occurs via ESP-NOW with a packed 13-byte binary struct.
+Communication occurs via ESP-NOW with a packed **13-byte** binary struct (`WirePacket`) transmitted on the air. On the Master, choreography entries use an internal `Packet` that additionally carries a `sectionId` so LED ranges can be resolved per dancer at send time.
 
-### Packet Definition (`Packet`)
+### Wire Packet Definition (`WirePacket` — sent over ESP-NOW, matches Slave)
 ```cpp
 typedef struct __attribute__((packed)) {
     uint32_t timeMs;      // Time offset from START command (milliseconds)
     uint8_t  slaveId;     // Target dancer ID: 1-5 (or 0 for ALL dancers)
     uint8_t  strip;       // Target strip: 0 = UPPER, 1 = LOWER, 2 = BOTH
-    uint16_t startLed;    // Starting LED index (0-based)
-    uint16_t endLed;      // Ending LED index (inclusive, up to 299)
+    uint16_t startLed;    // Resolved starting LED index (0-based)
+    uint16_t endLed;      // Resolved ending LED index (inclusive, up to 299)
     uint8_t  r;           // Red color component (0 - 255)
     uint8_t  g;           // Green color component (0 - 255)
     uint8_t  b;           // Blue color component (0 - 255)
-} Packet;
+} WirePacket;
 ```
+
+### Master Internal Packet Definition (`Packet`)
+Same 8 fields as above plus `uint8_t sectionId` (`SEC_NONE` for full-strip/full-suit or explicit-range cues, otherwise one of `SEC_LEFT_ZIPPER` … `SEC_BOTH_LEGS`). The Master resolves the section tag to the target dancer's own LED boundaries and sends the original 13-byte `WirePacket`. The Slave requires no changes.
 
 ### Identifier Constants
 | Identifier | Constant | Value | Description |
@@ -111,6 +119,7 @@ To make choreography authoring intuitive and readable, dedicated helper macros a
 - `CUE_LOWER_BODY(timeMs, dancer, r, g, b)`: Sets all lower body sections (LEDs 0-299 on GPIO 25).
 
 ### Specific Body Sections
+> These macros carry only a section tag. The LED range in parentheses is the Dancer 1 default; the Master resolves each target dancer's own boundaries (so `SLAVE_ALL` produces one correct packet per dancer).
 - `CUE_LEFT_ZIPPER(timeMs, dancer, r, g, b)`: Left chest zipper (LEDs 0 - 31)
 - `CUE_LEFT_HAND(timeMs, dancer, r, g, b)`: Left arm / hand (LEDs 32 - 100)
 - `CUE_HEAD(timeMs, dancer, r, g, b)`: Hood / Head (LEDs 101 - 152)

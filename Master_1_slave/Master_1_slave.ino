@@ -3,17 +3,16 @@
 // ============================================================================
 // Architecture:
 // - 1 Master ESP32 sends ESP-NOW choreography packets to 5 Slave ESP32s
-// - Configurable Sections per Dancer:
+// - Configurable Sections PER DANCER (each of the 5 dancers can have
+//   different LED boundaries for every body section):
 //     * TOP PART (Strip 0, GPIO 14):
-//         - Left Zipper:  0 to 31
-//         - Left Hand:    32 to 100
-//         - Hood / Head:  101 to 152
-//         - Right Hand:   153 to 225
-//         - Right Zipper: 226 to 299
+//         - Left Zipper, Left Hand, Hood/Head, Right Hand, Right Zipper
 //     * BOTTOM PART (Strip 1, GPIO 25):
-//         - Left Leg:     0 to 110
-//         - Right Leg:    111 to 224
-//         - Belt Area:    225 to 299
+//         - Left Leg, Right Leg, Belt Area
+//   Edit the per-dancer tables in the SECTION CONFIGURATION block below.
+// - Section cues targeting SLAVE_ALL are auto-split: every dancer receives
+//   its own section boundaries (one unicast packet per dancer).
+// - Wire format to slaves stays the original 13-byte layout (no slave reflash).
 // - Supports section-wise animations as well as full-suit animations
 // - Real-time connection status monitoring & delivery ACK verification via Serial
 // ============================================================================
@@ -51,107 +50,158 @@ uint8_t SLAVE_MACS[NUM_SLAVES][6] = {
 #define STRIP_LOWER  1   // Lower body LED strip
 #define STRIP_BOTH   2   // Both upper and lower body strips (Full Suit)
 
-// ================= SECTION CONFIGURATION (CONFIGURABLE) =================
+// ================= SECTION CONFIGURATION (PER-DANCER, CONFIGURABLE) =================
+// Every section has its own start/end for EACH dancer.
+// Array index: 0 = Dancer 1, 1 = Dancer 2, 2 = Dancer 3, 3 = Dancer 4, 4 = Dancer 5.
+// Change the value in a dancer's column to match that dancer's physical wiring.
+//
+// Example: if Dancer 2's Left Hand spans LEDs 20-88 instead of 32-100, edit:
+//     SEC_LEFT_HAND_START -> { 32, 20, 32, 32, 32 }
+//     SEC_LEFT_HAND_END   -> {100, 88,100,100,100 }
+
+// Section identifiers (tag carried by each cue; resolved per dancer at send time)
+#define SEC_NONE          0
+#define SEC_LEFT_ZIPPER   1
+#define SEC_LEFT_HAND     2
+#define SEC_HEAD          3
+#define SEC_RIGHT_HAND    4
+#define SEC_RIGHT_ZIPPER  5
+#define SEC_LEFT_LEG      6
+#define SEC_RIGHT_LEG     7
+#define SEC_BELT          8
+#define SEC_BOTH_LEGS     9
+
 // >>> TOP PART (Upper Body - Strip 0, GPIO 14, 300 LEDs: 0 - 299) <<<
-#define SEC_TOP_LEFT_ZIPPER_START    0
-#define SEC_TOP_LEFT_ZIPPER_END     31
+const uint16_t SEC_LEFT_ZIPPER_START [NUM_SLAVES] = {  0,   0,   0,   0,   0};
+const uint16_t SEC_LEFT_ZIPPER_END   [NUM_SLAVES] = { 31,  31,  31,  31,  31};
 
-#define SEC_TOP_LEFT_HAND_START     32
-#define SEC_TOP_LEFT_HAND_END      100
+const uint16_t SEC_LEFT_HAND_START   [NUM_SLAVES] = { 32,  32,  32,  32,  32};
+const uint16_t SEC_LEFT_HAND_END     [NUM_SLAVES] = {100, 100, 100, 100, 100};
 
-#define SEC_TOP_HEAD_START         101
-#define SEC_TOP_HEAD_END           152
+const uint16_t SEC_HEAD_START        [NUM_SLAVES] = {101, 101, 101, 101, 101};
+const uint16_t SEC_HEAD_END          [NUM_SLAVES] = {152, 152, 152, 152, 152};
 
-#define SEC_TOP_RIGHT_HAND_START   153
-#define SEC_TOP_RIGHT_HAND_END     225
+const uint16_t SEC_RIGHT_HAND_START  [NUM_SLAVES] = {153, 153, 153, 153, 153};
+const uint16_t SEC_RIGHT_HAND_END    [NUM_SLAVES] = {225, 225, 225, 225, 225};
 
-#define SEC_TOP_RIGHT_ZIPPER_START 226
-#define SEC_TOP_RIGHT_ZIPPER_END   299
+const uint16_t SEC_RIGHT_ZIPPER_START[NUM_SLAVES] = {226, 226, 226, 226, 226};
+const uint16_t SEC_RIGHT_ZIPPER_END  [NUM_SLAVES] = {299, 299, 299, 299, 299};
 
 // >>> BOTTOM PART (Lower Body - Strip 1, GPIO 25, 300 LEDs: 0 - 299) <<<
-#define SEC_BOT_LEFT_LEG_START       0
-#define SEC_BOT_LEFT_LEG_END       110
+const uint16_t SEC_LEFT_LEG_START    [NUM_SLAVES] = {  0,   0,   0,   0,   0};
+const uint16_t SEC_LEFT_LEG_END      [NUM_SLAVES] = {110, 110, 110, 110, 110};
 
-#define SEC_BOT_RIGHT_LEG_START    111
-#define SEC_BOT_RIGHT_LEG_END      224
+const uint16_t SEC_RIGHT_LEG_START   [NUM_SLAVES] = {111, 111, 111, 111, 111};
+const uint16_t SEC_RIGHT_LEG_END     [NUM_SLAVES] = {224, 224, 224, 224, 224};
 
-#define SEC_BOT_BELT_START         225
-#define SEC_BOT_BELT_END           299
+const uint16_t SEC_BELT_START        [NUM_SLAVES] = {225, 225, 225, 225, 225};
+const uint16_t SEC_BELT_END          [NUM_SLAVES] = {299, 299, 299, 299, 299};
+
+// Resolves a section tag to the LED range for a specific dancer (0-based index)
+void getSectionRange(uint8_t sectionId, int dancerIdx, uint16_t &start, uint16_t &end)
+{
+    switch (sectionId) {
+        case SEC_LEFT_ZIPPER:  start = SEC_LEFT_ZIPPER_START[dancerIdx];  end = SEC_LEFT_ZIPPER_END[dancerIdx];  break;
+        case SEC_LEFT_HAND:    start = SEC_LEFT_HAND_START[dancerIdx];    end = SEC_LEFT_HAND_END[dancerIdx];    break;
+        case SEC_HEAD:         start = SEC_HEAD_START[dancerIdx];         end = SEC_HEAD_END[dancerIdx];         break;
+        case SEC_RIGHT_HAND:   start = SEC_RIGHT_HAND_START[dancerIdx];   end = SEC_RIGHT_HAND_END[dancerIdx];   break;
+        case SEC_RIGHT_ZIPPER: start = SEC_RIGHT_ZIPPER_START[dancerIdx]; end = SEC_RIGHT_ZIPPER_END[dancerIdx]; break;
+        case SEC_LEFT_LEG:     start = SEC_LEFT_LEG_START[dancerIdx];     end = SEC_LEFT_LEG_END[dancerIdx];     break;
+        case SEC_RIGHT_LEG:    start = SEC_RIGHT_LEG_START[dancerIdx];    end = SEC_RIGHT_LEG_END[dancerIdx];    break;
+        case SEC_BELT:         start = SEC_BELT_START[dancerIdx];         end = SEC_BELT_END[dancerIdx];         break;
+        case SEC_BOTH_LEGS:    start = SEC_LEFT_LEG_START[dancerIdx];     end = SEC_RIGHT_LEG_END[dancerIdx];    break;
+        default:               start = 0;                                 end = 0;                               break;
+    }
+}
 
 // ================= PACKET STRUCTURE =================
-// 13-byte packed network struct sent over ESP-NOW
+// Internal choreography entry. Adds a 'sectionId' tag so the Master can
+// resolve per-dancer LED boundaries at send time. This struct is NOT sent
+// over the air (see WirePacket below).
 typedef struct __attribute__((packed)) {
     uint32_t timeMs;      // Time offset from START (ms)
     uint8_t  slaveId;     // Target dancer: 1 to 5 (0 = ALL dancers)
     uint8_t  strip;       // Target strip: 0 = UPPER, 1 = LOWER, 2 = BOTH
-    uint16_t startLed;    // Start LED index (0-based)
-    uint16_t endLed;      // End LED index (inclusive, e.g. 299)
+    uint16_t startLed;    // Start LED index (explicit-range cues only)
+    uint16_t endLed;      // End LED index (inclusive; explicit-range cues only)
     uint8_t  r;           // Red (0-255)
     uint8_t  g;           // Green (0-255)
     uint8_t  b;           // Blue (0-255)
+    uint8_t  sectionId;   // Section tag (SEC_NONE for explicit range / full strips)
 } Packet;
 
+// 13-byte packed struct actually transmitted over ESP-NOW (matches Slave exactly)
+typedef struct __attribute__((packed)) {
+    uint32_t timeMs;
+    uint8_t  slaveId;
+    uint8_t  strip;
+    uint16_t startLed;    // Resolved LED range (per-dancer, per-section)
+    uint16_t endLed;
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+} WirePacket;
+
 // ================= CHOREOGRAPHY HELPER MACROS =================
-// --- Full Suit & Full Strips ---
+// Section cues carry only a section tag; the actual LED range is resolved
+// per dancer at send time (see getSectionRange / sendPacket).
+// --- Full Suit & Full Strips (explicit 0-299 range, same for all dancers) ---
 #define CUE_FULL_SUIT(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_BOTH, 0, 299, r, g, b }
+    { ms, dancer, STRIP_BOTH, 0, 299, r, g, b, SEC_NONE }
 
 #define CUE_UPPER_BODY(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, 0, 299, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 299, r, g, b, SEC_NONE }
 
 #define CUE_LOWER_BODY(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_LOWER, 0, 299, r, g, b }
+    { ms, dancer, STRIP_LOWER, 0, 299, r, g, b, SEC_NONE }
 
 // --- Top Sections (Upper Strip) ---
 #define CUE_LEFT_ZIPPER(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, SEC_TOP_LEFT_ZIPPER_START, SEC_TOP_LEFT_ZIPPER_END, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 0, r, g, b, SEC_LEFT_ZIPPER }
 
 #define CUE_LEFT_HAND(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, SEC_TOP_LEFT_HAND_START, SEC_TOP_LEFT_HAND_END, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 0, r, g, b, SEC_LEFT_HAND }
 
 #define CUE_HEAD(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, SEC_TOP_HEAD_START, SEC_TOP_HEAD_END, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 0, r, g, b, SEC_HEAD }
 
 #define CUE_RIGHT_HAND(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, SEC_TOP_RIGHT_HAND_START, SEC_TOP_RIGHT_HAND_END, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 0, r, g, b, SEC_RIGHT_HAND }
 
 #define CUE_RIGHT_ZIPPER(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_UPPER, SEC_TOP_RIGHT_ZIPPER_START, SEC_TOP_RIGHT_ZIPPER_END, r, g, b }
+    { ms, dancer, STRIP_UPPER, 0, 0, r, g, b, SEC_RIGHT_ZIPPER }
 
 // --- Bottom Sections (Lower Strip) ---
 #define CUE_LEFT_LEG(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_LOWER, SEC_BOT_LEFT_LEG_START, SEC_BOT_LEFT_LEG_END, r, g, b }
+    { ms, dancer, STRIP_LOWER, 0, 0, r, g, b, SEC_LEFT_LEG }
 
 #define CUE_RIGHT_LEG(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_LOWER, SEC_BOT_RIGHT_LEG_START, SEC_BOT_RIGHT_LEG_END, r, g, b }
+    { ms, dancer, STRIP_LOWER, 0, 0, r, g, b, SEC_RIGHT_LEG }
 
 #define CUE_BOTH_LEGS(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_LOWER, SEC_BOT_LEFT_LEG_START, SEC_BOT_RIGHT_LEG_END, r, g, b }
+    { ms, dancer, STRIP_LOWER, 0, 0, r, g, b, SEC_BOTH_LEGS }
 
 #define CUE_BELT(ms, dancer, r, g, b) \
-    { ms, dancer, STRIP_LOWER, SEC_BOT_BELT_START, SEC_BOT_BELT_END, r, g, b }
+    { ms, dancer, STRIP_LOWER, 0, 0, r, g, b, SEC_BELT }
 
-// Helper: Converts strip & LED range to human-readable section name for Serial Monitor
-const char* getSectionName(uint8_t strip, uint16_t startLed, uint16_t endLed)
+// Helper: Converts a cue's section tag (or explicit range) to a readable name
+const char* getSectionName(uint8_t sectionId, uint8_t strip, uint16_t startLed, uint16_t endLed)
 {
+    switch (sectionId) {
+        case SEC_LEFT_ZIPPER:  return "LEFT ZIPPER";
+        case SEC_LEFT_HAND:    return "LEFT HAND";
+        case SEC_HEAD:         return "HOOD/HEAD";
+        case SEC_RIGHT_HAND:   return "RIGHT HAND";
+        case SEC_RIGHT_ZIPPER: return "RIGHT ZIPPER";
+        case SEC_LEFT_LEG:     return "LEFT LEG";
+        case SEC_RIGHT_LEG:    return "RIGHT LEG";
+        case SEC_BOTH_LEGS:    return "BOTH LEGS";
+        case SEC_BELT:         return "BELT AREA";
+    }
+    // SEC_NONE: explicit-range / full-strip cues
     if (strip == STRIP_BOTH && startLed == 0 && endLed >= 299) return "FULL SUIT";
-    if (strip == STRIP_UPPER) {
-        if (startLed == 0 && endLed >= 299) return "UPPER BODY (ALL)";
-        if (startLed == SEC_TOP_LEFT_ZIPPER_START && endLed == SEC_TOP_LEFT_ZIPPER_END) return "LEFT ZIPPER";
-        if (startLed == SEC_TOP_LEFT_HAND_START && endLed == SEC_TOP_LEFT_HAND_END) return "LEFT HAND";
-        if (startLed == SEC_TOP_HEAD_START && endLed == SEC_TOP_HEAD_END) return "HOOD/HEAD";
-        if (startLed == SEC_TOP_RIGHT_HAND_START && endLed == SEC_TOP_RIGHT_HAND_END) return "RIGHT HAND";
-        if (startLed == SEC_TOP_RIGHT_ZIPPER_START && endLed == SEC_TOP_RIGHT_ZIPPER_END) return "RIGHT ZIPPER";
-        return "UPPER CUSTOM";
-    }
-    if (strip == STRIP_LOWER) {
-        if (startLed == 0 && endLed >= 299) return "LOWER BODY (ALL)";
-        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_LEFT_LEG_END) return "LEFT LEG";
-        if (startLed == SEC_BOT_RIGHT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "RIGHT LEG";
-        if (startLed == SEC_BOT_LEFT_LEG_START && endLed == SEC_BOT_RIGHT_LEG_END) return "BOTH LEGS";
-        if (startLed == SEC_BOT_BELT_START && endLed == SEC_BOT_BELT_END) return "BELT AREA";
-        return "LOWER CUSTOM";
-    }
+    if (strip == STRIP_UPPER && startLed == 0 && endLed >= 299) return "UPPER BODY (ALL)";
+    if (strip == STRIP_LOWER && startLed == 0 && endLed >= 299) return "LOWER BODY (ALL)";
     return "CUSTOM";
 }
 
@@ -259,19 +309,69 @@ void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 #endif
 
 // ================= SEND PACKET FUNCTION =================
+// Builds a 13-byte WirePacket with the given resolved LED range and unicasts it
+// to a specific dancer (by 0-based peer index).
+void sendToDancer(int idx, const Packet &pkt, uint16_t startLed, uint16_t endLed)
+{
+    WirePacket w;
+    w.timeMs   = pkt.timeMs;
+    w.slaveId  = pkt.slaveId;
+    w.strip    = pkt.strip;
+    w.startLed = startLed;
+    w.endLed   = endLed;
+    w.r = pkt.r;
+    w.g = pkt.g;
+    w.b = pkt.b;
+
+    packetsSent[idx]++;
+    esp_err_t res = esp_now_send(SLAVE_MACS[idx], (uint8_t *)&w, sizeof(WirePacket));
+    if (res != ESP_OK) {
+        Serial.printf("  [SEND ERROR] Failed to send to Dancer %d (err: %d)\n", idx + 1, res);
+    }
+}
+
 void sendPacket(Packet &pkt)
 {
+    // Section cue: resolve the LED range from each target dancer's own table
+    if (pkt.sectionId != SEC_NONE)
+    {
+        if (pkt.slaveId >= 1 && pkt.slaveId <= NUM_SLAVES)
+        {
+            int idx = pkt.slaveId - 1;
+            if (isPeerRegistered[idx])
+            {
+                uint16_t s, e;
+                getSectionRange(pkt.sectionId, idx, s, e);
+                sendToDancer(idx, pkt, s, e);
+            }
+            else
+            {
+                Serial.printf("  [SKIP] Dancer %d MAC is not registered\n", pkt.slaveId);
+            }
+        }
+        else if (pkt.slaveId == SLAVE_ALL)
+        {
+            // Auto-split: each dancer gets its own section boundaries
+            for (int i = 0; i < NUM_SLAVES; i++)
+            {
+                if (isPeerRegistered[i])
+                {
+                    uint16_t s, e;
+                    getSectionRange(pkt.sectionId, i, s, e);
+                    sendToDancer(i, pkt, s, e);
+                }
+            }
+        }
+        return;
+    }
+
+    // Explicit-range cue (full suit / whole strip): identical range for all dancers
     if (pkt.slaveId >= 1 && pkt.slaveId <= NUM_SLAVES)
     {
-        // Unicast to specific dancer
         int idx = pkt.slaveId - 1;
         if (isPeerRegistered[idx])
         {
-            packetsSent[idx]++;
-            esp_err_t res = esp_now_send(SLAVE_MACS[idx], (uint8_t *)&pkt, sizeof(Packet));
-            if (res != ESP_OK) {
-                Serial.printf("  [SEND ERROR] Failed to send to Dancer %d (err: %d)\n", pkt.slaveId, res);
-            }
+            sendToDancer(idx, pkt, pkt.startLed, pkt.endLed);
         }
         else
         {
@@ -280,16 +380,11 @@ void sendPacket(Packet &pkt)
     }
     else if (pkt.slaveId == SLAVE_ALL)
     {
-        // Send to all 5 dancers
         for (int i = 0; i < NUM_SLAVES; i++)
         {
             if (isPeerRegistered[i])
             {
-                packetsSent[i]++;
-                esp_err_t res = esp_now_send(SLAVE_MACS[i], (uint8_t *)&pkt, sizeof(Packet));
-                if (res != ESP_OK) {
-                    Serial.printf("  [SEND ERROR] Failed to send to Dancer %d (err: %d)\n", i + 1, res);
-                }
+                sendToDancer(i, pkt, pkt.startLed, pkt.endLed);
             }
         }
     }
@@ -305,8 +400,14 @@ void testConnections()
     int onlineCount = 0;
     int configuredCount = 0;
 
-    // Send a harmless probe packet (RGB 0,0,0 with startLed=0, endLed=0) to check 802.11 ACK
-    Packet pingPkt = {0, 0, STRIP_BOTH, 0, 0, 0, 0, 0};
+    // Send a harmless probe packet (RGB 0,0,0) to check the 802.11 ACK
+    WirePacket pingPkt;
+    pingPkt.timeMs   = 0;
+    pingPkt.slaveId  = 0;
+    pingPkt.strip    = STRIP_BOTH;
+    pingPkt.startLed = 0;
+    pingPkt.endLed   = 0;
+    pingPkt.r = 0; pingPkt.g = 0; pingPkt.b = 0;
 
     for (int i = 0; i < NUM_SLAVES; i++)
     {
@@ -322,7 +423,7 @@ void testConnections()
         pingPkt.slaveId = dancerNum;
         lastAckSuccess[i] = false;
 
-        esp_now_send(SLAVE_MACS[i], (uint8_t *)&pingPkt, sizeof(Packet));
+        esp_now_send(SLAVE_MACS[i], (uint8_t *)&pingPkt, sizeof(WirePacket));
         delay(60); // Wait for transmission & hardware ACK
 
         if (lastAckSuccess[i])
@@ -420,17 +521,20 @@ void setup()
     Serial.println(WiFi.macAddress());
     Serial.printf("Wi-Fi Channel:      %d\n", WIFI_CHANNEL);
     Serial.println("-------------------------------------------------------");
-    Serial.println("CONFIGURED BODY SECTIONS:");
-    Serial.printf("  Upper Strip (GPIO 14): LeftZip: %d-%d | LHand: %d-%d | Hood: %d-%d | RHand: %d-%d | RightZip: %d-%d\n",
-                  SEC_TOP_LEFT_ZIPPER_START, SEC_TOP_LEFT_ZIPPER_END,
-                  SEC_TOP_LEFT_HAND_START, SEC_TOP_LEFT_HAND_END,
-                  SEC_TOP_HEAD_START, SEC_TOP_HEAD_END,
-                  SEC_TOP_RIGHT_HAND_START, SEC_TOP_RIGHT_HAND_END,
-                  SEC_TOP_RIGHT_ZIPPER_START, SEC_TOP_RIGHT_ZIPPER_END);
-    Serial.printf("  Lower Strip (GPIO 25): LeftLeg: %d-%d | RightLeg: %d-%d | Belt: %d-%d\n",
-                  SEC_BOT_LEFT_LEG_START, SEC_BOT_LEFT_LEG_END,
-                  SEC_BOT_RIGHT_LEG_START, SEC_BOT_RIGHT_LEG_END,
-                  SEC_BOT_BELT_START, SEC_BOT_BELT_END);
+    Serial.println("CONFIGURED BODY SECTIONS (per dancer):");
+    for (int d = 0; d < NUM_SLAVES; d++) {
+        Serial.printf("  Dancer %d:\n", d + 1);
+        Serial.printf("    Upper (GPIO 14): LeftZip %d-%d | LHand %d-%d | Hood %d-%d | RHand %d-%d | RightZip %d-%d\n",
+                      SEC_LEFT_ZIPPER_START[d], SEC_LEFT_ZIPPER_END[d],
+                      SEC_LEFT_HAND_START[d], SEC_LEFT_HAND_END[d],
+                      SEC_HEAD_START[d], SEC_HEAD_END[d],
+                      SEC_RIGHT_HAND_START[d], SEC_RIGHT_HAND_END[d],
+                      SEC_RIGHT_ZIPPER_START[d], SEC_RIGHT_ZIPPER_END[d]);
+        Serial.printf("    Lower (GPIO 25): LeftLeg %d-%d | RightLeg %d-%d | Belt %d-%d\n",
+                      SEC_LEFT_LEG_START[d], SEC_LEFT_LEG_END[d],
+                      SEC_RIGHT_LEG_START[d], SEC_RIGHT_LEG_END[d],
+                      SEC_BELT_START[d], SEC_BELT_END[d]);
+    }
     Serial.println("-------------------------------------------------------");
     Serial.println("Initializing ESP-NOW Peer Registration for 5 Dancers:");
 
@@ -545,14 +649,27 @@ void loop()
            elapsed >= choreography[stepIndex].timeMs)
     {
         Packet &pkt = choreography[stepIndex];
-        const char *secName = getSectionName(pkt.strip, pkt.startLed, pkt.endLed);
+        const char *secName = getSectionName(pkt.sectionId, pkt.strip, pkt.startLed, pkt.endLed);
+
+        // For section cues, show a representative resolved range (Dancer 1 for ALL)
+        uint16_t dispStart = pkt.startLed;
+        uint16_t dispEnd   = pkt.endLed;
+        if (pkt.sectionId != SEC_NONE) {
+            int di = (pkt.slaveId >= 1 && pkt.slaveId <= NUM_SLAVES) ? pkt.slaveId - 1 : 0;
+            getSectionRange(pkt.sectionId, di, dispStart, dispEnd);
+        }
 
         if (pkt.slaveId == SLAVE_ALL) {
-            Serial.printf("[CUE %02d @ %6ums] ALL DANCERS -> %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
-                          stepIndex + 1, elapsed, secName, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
+            if (pkt.sectionId != SEC_NONE) {
+                Serial.printf("[CUE %02d @ %6ums] ALL DANCERS -> %-16s | LEDs per-dancer | RGB(%3u,%3u,%3u)\n",
+                              stepIndex + 1, elapsed, secName, pkt.r, pkt.g, pkt.b);
+            } else {
+                Serial.printf("[CUE %02d @ %6ums] ALL DANCERS -> %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
+                              stepIndex + 1, elapsed, secName, dispStart, dispEnd, pkt.r, pkt.g, pkt.b);
+            }
         } else {
             Serial.printf("[CUE %02d @ %6ums] DANCER #%d     -> %-16s | LEDs %3u-%3u | RGB(%3u,%3u,%3u)\n",
-                          stepIndex + 1, elapsed, pkt.slaveId, secName, pkt.startLed, pkt.endLed, pkt.r, pkt.g, pkt.b);
+                          stepIndex + 1, elapsed, pkt.slaveId, secName, dispStart, dispEnd, pkt.r, pkt.g, pkt.b);
         }
 
         sendPacket(pkt);
